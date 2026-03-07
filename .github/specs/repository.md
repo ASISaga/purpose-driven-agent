@@ -1,4 +1,4 @@
-# BusinessInfinity Repository Specification
+# purpose-driven-agent Repository Specification
 
 **Version**: 1.0.0  
 **Status**: Active  
@@ -6,7 +6,7 @@
 
 ## Overview
 
-BusinessInfinity is a lean Azure Functions application that delegates all agent orchestration, Service Bus communication, authentication, and deployment scaffolding to the **`aos-client-sdk`**. The application contains only business logic — expressed as workflow functions decorated with `@app.workflow`.
+`purpose-driven-agent` is a **code-only Python library** that provides `PurposeDrivenAgent` — the abstract base class and fundamental building block of the Agent Operating System (AOS). It enables perpetual, purpose-driven AI agents that run indefinitely, maintain rich state across every interaction, and work toward a long-term assigned purpose.
 
 ## Scope
 
@@ -19,80 +19,103 @@ BusinessInfinity is a lean Azure Functions application that delegates all agent 
 
 | Concern | Owner |
 |---------|-------|
-| Business workflows (strategic review, market analysis, budget approval, etc.) | **BusinessInfinity** |
-| Azure Functions scaffolding, HTTP/Service Bus triggers, auth | `aos-client-sdk` |
-| Agent lifecycle, perpetual orchestration, messaging, storage, monitoring | AOS |
-| Agent catalog (C-suite agents, capabilities) | RealmOfAgents |
+| Abstract agent base class (`PurposeDrivenAgent`) | **purpose-driven-agent** |
+| Concrete general-purpose implementation (`GenericPurposeDrivenAgent`) | **purpose-driven-agent** |
+| MCP context preservation (`ContextMCPServer`) | **purpose-driven-agent** |
+| ML/LoRA adapter interface (`IMLService`) | **purpose-driven-agent** |
+| Agent-to-Agent tool representation (`A2AAgentTool`) | **purpose-driven-agent** |
+| Domain-specific agents (leadership, CEO, CFO, etc.) | Downstream packages |
+| AOS runtime, orchestration, messaging, storage | AOS ecosystem |
 
-BusinessInfinity **knows nothing about agent internals**. It calls `start_orchestration` / `submit_orchestration` and lets AOS handle the rest.
+`purpose-driven-agent` is **library-only** — it is not deployed as its own service. It is consumed by agent repos (e.g. `leadership-agent`, `ceo-agent`) that are deployed.
 
 ## Technology Stack
 
 | Component | Technology |
 |-----------|-----------|
 | Runtime | Python 3.10+ |
-| App framework | `aos-client-sdk[azure]` — `AOSApp` / `WorkflowRequest` |
-| Hosting | Azure Functions (provisioned by SDK) |
-| Messaging | Azure Service Bus (provisioned by SDK) |
+| Core dependency | `agent-framework` — Microsoft Agent Framework |
+| Agent hosting adapter | `azure-ai-agentservice-agentframework` |
+| Agent hosting engine | `azure-ai-agentservice-core` |
+| Authentication | `azure-identity` — keyless Entra Agent ID |
+| MCP tool routing | `aos-mcp-servers` |
+| Data validation | `pydantic>=2.12` |
 | Tests | `pytest` + `pytest-asyncio` |
 | Linter | `pylint` |
-| Build / deploy | `azure.yaml` (Azure Developer CLI) |
+| Type checking | `mypy` |
+| Formatter | `black` + `isort` |
 
 ## Directory Structure
 
 ```
-business-infinity/
+purpose-driven-agent/
 ├── src/
-│   └── business_infinity/
-│       ├── __init__.py
-│       └── workflows.py       # @app.workflow decorators — all business logic lives here
+│   └── purpose_driven_agent/
+│       ├── __init__.py          # Public API exports
+│       ├── agent.py             # PurposeDrivenAgent, GenericPurposeDrivenAgent, A2AAgentTool
+│       ├── context_server.py    # ContextMCPServer — MCP-based state persistence
+│       └── ml_interface.py      # IMLService, NoOpMLService — LoRA adapter interface
 ├── tests/
-│   └── test_workflows.py      # pytest unit tests
-├── function_app.py            # Azure Functions entry point: app.get_functions()
-├── pyproject.toml             # Build config, dependencies, pytest settings
-└── azure.yaml                 # Azure Developer CLI deployment config
+│   ├── conftest.py              # Shared pytest fixtures
+│   └── test_purpose_driven_agent.py  # pytest unit tests
+├── docs/
+│   ├── api-reference.md
+│   └── contributing.md
+├── examples/                    # Usage examples
+└── pyproject.toml               # Build config, dependencies, pytest settings
 ```
 
 ## Core Patterns
 
-### Workflow Definition
+### GenericPurposeDrivenAgent (simplest usage)
 
 ```python
-from aos_client import AOSApp, WorkflowRequest
+from purpose_driven_agent import GenericPurposeDrivenAgent
 
-app = AOSApp(name="business-infinity")
-
-@app.workflow("workflow-name")
-async def my_workflow(request: WorkflowRequest) -> dict:
-    agents = await request.client.list_agents()
-    status = await request.client.start_orchestration(
-        agent_ids=[a.agent_id for a in agents],
-        purpose="Describe the perpetual goal",
-        context=request.body,
-    )
-    return {"orchestration_id": status.orchestration_id, "status": status.status.value}
-```
-
-### Perpetual Orchestrations
-
-All orchestrations are **perpetual and purpose-driven** — agents work toward the purpose indefinitely. There is no finite completion.
-
-```python
-status = await request.client.start_orchestration(
-    agent_ids=agent_ids,
-    purpose="Drive strategic review and continuous organisational improvement",
-    purpose_scope="C-suite strategic alignment and cross-functional coordination",
-    context=request.body,
+agent = GenericPurposeDrivenAgent(
+    agent_id="assistant",
+    purpose="Assist users with information retrieval and task coordination",
+    adapter_name="general",
 )
+
+await agent.initialize()
+await agent.start()
+
+result = await agent.handle_event({"type": "user_query", "data": {"query": "What is AOS?"}})
+print(result["status"])  # "success"
+
+await agent.stop()
 ```
 
-### C-Suite Agent Selection
+### Custom Subclass Pattern
 
 ```python
-# Prefer explicit IDs; fall back to type-based selection
-all_agents = await client.list_agents()
-by_id = {a.agent_id: a for a in all_agents}
-selected = [by_id[aid] for aid in C_SUITE_AGENT_IDS if aid in by_id]
+from typing import List
+from purpose_driven_agent import PurposeDrivenAgent
+
+class LegalAgent(PurposeDrivenAgent):
+    def get_agent_type(self) -> List[str]:
+        available = self.get_available_personas()
+        return ["legal"] if "legal" in available else ["legal"]
+```
+
+### Perpetual Operation
+
+All agents are **perpetual and purpose-driven** — they run indefinitely toward their assigned purpose:
+
+```
+initialize()  →  loads saved state from MCP
+start()       →  spawns _perpetual_loop() background task
+[Event] → _awaken() → handle_event() → _sleep()
+stop()        →  saves state, exits loop
+```
+
+### LoRA Adapter Mapping
+
+```python
+GenericPurposeDrivenAgent(adapter_name="finance")    # → finance domain
+GenericPurposeDrivenAgent(adapter_name="legal")      # → legal domain
+GenericPurposeDrivenAgent(adapter_name="general")    # → general purpose
 ```
 
 ## Testing Workflow
@@ -104,11 +127,17 @@ pip install -e ".[dev]"
 # Run all tests
 pytest tests/ -v
 
+# With coverage
+pytest tests/ --cov=purpose_driven_agent --cov-report=term-missing
+
 # Lint
-pylint src/business_infinity/
+pylint src/purpose_driven_agent
+
+# Type check
+mypy src/purpose_driven_agent
 
 # Specific test
-pytest tests/test_workflows.py -v -k "test_workflows_registered"
+pytest tests/test_purpose_driven_agent.py -v -k "test_initialize"
 ```
 
 **CI**: GitHub Actions runs `pytest` across Python 3.10, 3.11, and 3.12 on every push/PR to `main`.
@@ -119,21 +148,26 @@ pytest tests/test_workflows.py -v -k "test_workflows_registered"
 
 | Repository | Role |
 |-----------|------|
-| [aos-client-sdk](https://github.com/ASISaga/aos-client-sdk) | Client SDK & App Framework |
-| [aos-dispatcher](https://github.com/ASISaga/aos-dispatcher) | AOS Orchestration API |
-| [aos-realm-of-agents](https://github.com/ASISaga/aos-realm-of-agents) | Agent catalog (C-suite) |
-| [aos-kernel](https://github.com/ASISaga/aos-kernel) | OS kernel |
+| [leadership-agent](https://github.com/ASISaga/leadership-agent) | LeadershipAgent: decision-making, multi-agent orchestration |
+| [ceo-agent](https://github.com/ASISaga/ceo-agent) | CEOAgent: executive + leadership dual-purpose |
+| [cfo-agent](https://github.com/ASISaga/cfo-agent) | CFOAgent: finance + leadership dual-purpose |
+| [cto-agent](https://github.com/ASISaga/cto-agent) | CTOAgent: technology + leadership dual-purpose |
+| [cso-agent](https://github.com/ASISaga/cso-agent) | CSOAgent: security + leadership dual-purpose |
+| [cmo-agent](https://github.com/ASISaga/cmo-agent) | CMOAgent: marketing + leadership dual-purpose |
+| [AgentOperatingSystem](https://github.com/ASISaga/AgentOperatingSystem) | Full AOS runtime with Azure, LoRAx, and orchestration |
+| [aos-mcp-servers](https://github.com/ASISaga/aos-mcp-servers) | MCP tool routing and transport |
 
 ## Key Design Principles
 
-1. **Zero boilerplate** — No Azure Functions scaffolding in this repo
-2. **Purpose-driven** — Orchestrations are perpetual; describe *why*, not *how*
-3. **SDK-delegated** — All infrastructure concerns belong to `aos-client-sdk`
-4. **Business-only** — Only business logic lives here; no agent internals
+1. **Perpetual** — Agents run indefinitely; there is no finite task completion
+2. **Purpose-driven** — Every decision is evaluated against a long-term purpose
+3. **MCP-preserved** — `ContextMCPServer` persists all state across restarts
+4. **LoRA-mapped** — Domain expertise via adapter_name → LoRA adapter
+5. **Library-only** — No deployment scaffolding; consumed by agent repositories
 
 ## References
 
 → **Agent framework**: `.github/specs/agent-intelligence-framework.md`  
 → **Conventional tools**: `.github/docs/conventional-tools.md`  
 → **Python coding standards**: `.github/instructions/python.instructions.md`  
-→ **Azure Functions patterns**: `.github/instructions/azure-functions.instructions.md`
+→ **purpose-driven-agent patterns**: `.github/instructions/purpose-driven-agent.instructions.md`
