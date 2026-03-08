@@ -1,3 +1,8 @@
+---
+applyTo: "src/**/*.py,tests/**/*.py"
+description: "purpose-driven-agent library patterns: PurposeDrivenAgent, async, MCP, LoRA, testing"
+---
+
 # Copilot Coding Instructions — purpose-driven-agent
 
 ## Language & Version
