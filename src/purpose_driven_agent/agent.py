@@ -110,7 +110,7 @@ try:
     _AGENT_FRAMEWORK_AVAILABLE = True
 except ImportError:  # pragma: no cover
     # Stub base class when agent_framework package is not installed.
-    # Install via:  pip install agent-framework>=1.0.0rc1
+    # Install via:  pip install agent-framework>=1.0.0
     class _AgentFrameworkBase:  # type: ignore[no-redef]  # pylint: disable=too-few-public-methods
         """Stub for agent_framework.Agent when the package is not available."""
 
