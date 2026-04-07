@@ -35,8 +35,8 @@
 |-----------|-----------|
 | Runtime | Python 3.10+ |
 | Core dependency | `agent-framework` — Microsoft Agent Framework |
-| Agent hosting adapter | `azure-ai-agentservice-agentframework` |
-| Agent hosting engine | `azure-ai-agentservice-core` |
+| Agent hosting adapter | `agent-framework-foundry` |
+| Agent hosting engine | `azure-ai-agents` |
 | Authentication | `azure-identity` — keyless Entra Agent ID |
 | MCP tool routing | `aos-mcp-servers` |
 | Data validation | `pydantic>=2.12` |

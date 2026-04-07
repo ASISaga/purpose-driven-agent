@@ -81,9 +81,9 @@ pip install "purpose-driven-agent[dev]"
 
 | Package | Purpose |
 |---|---|
-| `agent-framework` | Core framework for agent logic |
-| `azure-ai-agentservice-agentframework` | Adapter converting agents into Foundry Agent Service-compatible hosted services |
-| `azure-ai-agentservice-core` | Engine hosting agents as containers in the cloud |
+| `agent-framework` | Core Microsoft Agent Framework for agent logic |
+| `agent-framework-foundry` | Adapter converting agents into Foundry Agent Service-compatible hosted services |
+| `azure-ai-agents` | Azure AI Agents Service client — engine hosting agents in the cloud |
 | `azure-identity` | Secure, keyless authentication via Entra Agent ID |
 | `aos-mcp-servers` | MCP tool routing and transport |
 | `pydantic` | Configuration and data validation |
