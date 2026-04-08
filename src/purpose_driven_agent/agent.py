@@ -37,7 +37,11 @@ from typing import Any, Callable, Dict, List, Optional, Protocol
 from purpose_driven_agent.context_provider import Context, ContextProvider
 from purpose_driven_agent.context_server import ContextMCPServer
 from purpose_driven_agent.ml_interface import IMLService, NoOpMLService
-from aos_mcp_servers.routing import MCPToolDefinition, MCPTransportType
+from aos_mcp_servers.routing import (
+    AgentFrameworkMCPServerAdapter,
+    MCPToolDefinition,
+    MCPTransportType,
+)
 
 
 # ---------------------------------------------------------------------------

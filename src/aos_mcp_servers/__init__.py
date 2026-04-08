@@ -17,6 +17,7 @@ Public API::
 """
 
 from aos_mcp_servers.routing import (
+    AgentFrameworkMCPServerAdapter,
     MCPStdioTool,
     MCPStreamableHTTPTool,
     MCPToolDefinition,
@@ -30,4 +31,5 @@ __all__ = [
     "MCPStdioTool",
     "MCPStreamableHTTPTool",
     "MCPWebsocketTool",
+    "AgentFrameworkMCPServerAdapter",
 ]

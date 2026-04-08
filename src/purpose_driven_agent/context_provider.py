@@ -61,7 +61,7 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -243,3 +243,95 @@ class SubconsciousContextProvider(ContextProvider):
             engineered_context = ""
 
         return Context(instructions=engineered_context, messages=messages)
+
+
+# ---------------------------------------------------------------------------
+# Live server factory
+# ---------------------------------------------------------------------------
+
+#: Base URL of the live ASI Saga subconscious MCP server.
+SUBCONSCIOUS_MCP_URL: str = "https://subconscious.asisaga.com/mcp"
+
+
+def create_subconscious_provider(
+    agent_name: str,
+    repo: str,
+    tool_name: str = "read_subconscious_jsonl",
+    mcp_url: str = SUBCONSCIOUS_MCP_URL,
+) -> SubconsciousContextProvider:
+    """Create a :class:`SubconsciousContextProvider` wired to the live
+    ``subconscious.asisaga.com`` MCP server.
+
+    Uses ``agent_framework.MCPStreamableHTTPTool`` (the real Microsoft Agent
+    Framework HTTP transport) wrapped in an
+    :class:`~aos_mcp_servers.routing.AgentFrameworkMCPServerAdapter` that
+    adapts its ``**kwargs`` calling convention to the
+    :class:`~purpose_driven_agent.MCPServerProtocol` interface expected by
+    :class:`SubconsciousContextProvider`.
+
+    Example::
+
+        from purpose_driven_agent import GenericPurposeDrivenAgent
+        from purpose_driven_agent.context_provider import create_subconscious_provider
+
+        agent = GenericPurposeDrivenAgent(
+            agent_id="cmo",
+            purpose="Lead marketing strategy and brand growth",
+            adapter_name="marketing",
+        )
+        await agent.initialize()
+        agent.set_context_provider(
+            create_subconscious_provider(agent_name="CMO", repo="agent-cmo-repo")
+        )
+        result = await agent.handle_event({"type": "strategy_review"})
+        # result["injected_context"] == "PRIMARY SUBCONSCIOUS CONTEXT:\\n..."
+
+    Args:
+        agent_name: Identity of the agent whose subconscious data to fetch
+            (e.g. ``"CMO"``).  Forwarded to the MCP tool as ``agent_name``.
+        repo: Repository name containing the agent's JSONL subconscious data
+            (e.g. ``"agent-cmo-repo"``).  Forwarded to the MCP tool as
+            ``repo``.
+        tool_name: Name of the MCP tool on the server to invoke.  Defaults to
+            ``"read_subconscious_jsonl"``.
+        mcp_url: Base URL of the MCP server.  Defaults to
+            :data:`SUBCONSCIOUS_MCP_URL` (``https://subconscious.asisaga.com/mcp``).
+
+    Returns:
+        A :class:`SubconsciousContextProvider` that connects to the live
+        ``subconscious.asisaga.com`` server on first use.
+
+    Raises:
+        ImportError: If ``agent_framework`` is not installed.  Install it with
+            ``pip install agent-framework`` or ``pip install purpose-driven-agent[azure]``.
+    """
+    try:
+        from agent_framework import MCPStreamableHTTPTool  # type: ignore[import-untyped]
+    except ImportError as exc:  # pragma: no cover
+        raise ImportError(
+            "agent-framework is required for create_subconscious_provider(). "
+            "Install it with: pip install agent-framework"
+        ) from exc
+
+    from aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
+
+    real_tool = MCPStreamableHTTPTool(
+        name="subconscious",
+        url=mcp_url,
+    )
+    adapter: Optional[AgentFrameworkMCPServerAdapter] = AgentFrameworkMCPServerAdapter(real_tool)
+
+    logger = logging.getLogger("purpose_driven_agent.create_subconscious_provider")
+    logger.info(
+        "Created SubconsciousContextProvider for agent '%s' repo '%s' → %s",
+        agent_name,
+        repo,
+        mcp_url,
+    )
+
+    return SubconsciousContextProvider(
+        mcp_server=adapter,
+        agent_name=agent_name,
+        repo=repo,
+        tool_name=tool_name,
+    )

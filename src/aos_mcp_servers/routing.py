@@ -235,3 +235,79 @@ class MCPWebsocketTool:
             "tool": tool_name,
             "params": params,
         }
+
+
+class AgentFrameworkMCPServerAdapter:
+    """Adapter that exposes a real ``agent_framework`` MCP tool as an
+    :class:`~purpose_driven_agent.MCPServerProtocol`-compatible server.
+
+    ``agent_framework.MCPStreamableHTTPTool`` (and its siblings) accept
+    tool parameters as ``**kwargs`` and require an explicit ``connect()``
+    call before the first ``call_tool`` invocation.  This adapter:
+
+    * translates the ``call_tool(tool_name, params: dict)`` protocol used by
+      :class:`~purpose_driven_agent.SubconsciousContextProvider` into the
+      ``call_tool(tool_name, **params)`` signature of the underlying tool.
+    * lazily connects on the first ``call_tool`` invocation so that callers
+      do not need to manage the connection lifecycle explicitly.
+
+    The adapter is returned by
+    :func:`~purpose_driven_agent.context_provider.create_subconscious_provider`
+    and is not normally constructed directly.
+
+    Example::
+
+        from agent_framework import MCPStreamableHTTPTool
+        from aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
+
+        real_tool = MCPStreamableHTTPTool(
+            name="subconscious",
+            url="https://subconscious.asisaga.com/mcp",
+        )
+        adapter = AgentFrameworkMCPServerAdapter(real_tool)
+        # Now usable anywhere MCPServerProtocol is expected.
+    """
+
+    def __init__(self, mcp_tool: Any) -> None:
+        """Wrap an ``agent_framework`` MCP tool instance.
+
+        Args:
+            mcp_tool: A connected or unconnected MCP tool from
+                ``agent_framework`` (e.g. ``MCPStreamableHTTPTool``).
+                The tool must expose ``connect()`` and
+                ``call_tool(tool_name, **kwargs)`` coroutines.
+        """
+        self._tool = mcp_tool
+        self._connected: bool = False
+
+    async def _ensure_connected(self) -> None:
+        """Connect to the MCP server if not already connected."""
+        if not self._connected:
+            await self._tool.connect()
+            self._connected = True
+
+    async def list_tools(self) -> List[MCPToolDefinition]:
+        """Return an empty list — tool discovery is handled by agent_framework.
+
+        Returns:
+            Empty list; the underlying ``agent_framework`` tool manages its
+            own tool loading and discovery.
+        """
+        return []
+
+    async def call_tool(self, tool_name: str, params: Dict[str, Any]) -> Any:
+        """Invoke *tool_name* with *params* on the wrapped ``agent_framework`` tool.
+
+        Lazily connects to the MCP server on the first call.  Translates the
+        ``params`` dict into the ``**kwargs`` expected by the underlying tool.
+
+        Args:
+            tool_name: Name of the MCP tool to invoke.
+            params: Input parameters forwarded as keyword arguments.
+
+        Returns:
+            Raw result from ``agent_framework`` tool (``str`` or
+            ``list[Content]``).
+        """
+        await self._ensure_connected()
+        return await self._tool.call_tool(tool_name, **params)

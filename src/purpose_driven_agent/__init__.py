@@ -31,9 +31,11 @@ from purpose_driven_agent.agent import (
     PurposeDrivenAgent,
 )
 from purpose_driven_agent.context_provider import (
+    SUBCONSCIOUS_MCP_URL,
     Context,
     ContextProvider,
     SubconsciousContextProvider,
+    create_subconscious_provider,
 )
 from purpose_driven_agent.context_server import ContextMCPServer
 from purpose_driven_agent.ml_interface import IMLService, NoOpMLService
@@ -49,6 +51,8 @@ __all__ = [
     "Context",
     "ContextProvider",
     "SubconsciousContextProvider",
+    "create_subconscious_provider",
+    "SUBCONSCIOUS_MCP_URL",
 ]
 
 __version__ = "1.0.0"

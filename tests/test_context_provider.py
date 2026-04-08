@@ -14,17 +14,27 @@ Coverage targets
 - handle_event stores injected_context in the MCP context server.
 - handle_event with no provider returns injected_context=None.
 - Agent constructor accepts context_provider parameter.
+- AgentFrameworkMCPServerAdapter adapts **kwargs tool to params-dict interface.
+- create_subconscious_provider factory returns a configured SubconsciousContextProvider.
+- SUBCONSCIOUS_MCP_URL constant is exported from the top-level package.
 """
 
 import pytest
 
+from typing import Any
+
 from purpose_driven_agent import (
+    SUBCONSCIOUS_MCP_URL,
     Context,
     ContextProvider,
     GenericPurposeDrivenAgent,
     SubconsciousContextProvider,
+    create_subconscious_provider,
 )
-from purpose_driven_agent.context_provider import Context as ContextDirect
+from purpose_driven_agent.context_provider import (
+    SUBCONSCIOUS_MCP_URL as _SUBCONSCIOUS_MCP_URL_DIRECT,
+    Context as ContextDirect,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -363,3 +373,143 @@ class TestAgentContextProviderIntegration:
         init_agent.set_context_provider(provider2)
         result = await init_agent.handle_event({"type": "test"})
         assert result["injected_context"] == "SECOND"
+
+
+# ---------------------------------------------------------------------------
+# AgentFrameworkMCPServerAdapter
+# ---------------------------------------------------------------------------
+
+
+class TestAgentFrameworkMCPServerAdapter:
+    """Tests for the adapter that bridges agent_framework tools to MCPServerProtocol."""
+
+    def _make_real_tool_stub(self, return_value: object = "af-output") -> Any:
+        """Return an object that mimics agent_framework.MCPTool interface."""
+
+        class FakeAgentFrameworkTool:
+            def __init__(self, rv: object) -> None:
+                self._rv = rv
+                self.connected = False
+                self.calls: list = []
+
+            async def connect(self, *, reset: bool = False) -> None:
+                self.connected = True
+
+            async def call_tool(self, tool_name: str, **kwargs: Any) -> object:
+                self.calls.append({"tool": tool_name, "kwargs": kwargs})
+                return self._rv
+
+        return FakeAgentFrameworkTool(return_value)
+
+    @pytest.mark.asyncio
+    async def test_adapter_list_tools_returns_empty(self) -> None:
+        from aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
+
+        adapter = AgentFrameworkMCPServerAdapter(self._make_real_tool_stub())
+        tools = await adapter.list_tools()
+        assert tools == []
+
+    @pytest.mark.asyncio
+    async def test_adapter_calls_connect_on_first_call_tool(self) -> None:
+        from aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
+
+        fake_tool = self._make_real_tool_stub()
+        adapter = AgentFrameworkMCPServerAdapter(fake_tool)
+        assert not fake_tool.connected
+        await adapter.call_tool("my_tool", {})
+        assert fake_tool.connected
+
+    @pytest.mark.asyncio
+    async def test_adapter_does_not_reconnect_on_second_call(self) -> None:
+        from aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
+
+        class CountingTool:
+            connect_count = 0
+            async def connect(self, *, reset: bool = False) -> None:
+                CountingTool.connect_count += 1
+            async def call_tool(self, tool_name: str, **kwargs: Any) -> object:
+                return "x"
+
+        tool = CountingTool()
+        adapter = AgentFrameworkMCPServerAdapter(tool)
+        await adapter.call_tool("t", {})
+        await adapter.call_tool("t", {})
+        assert tool.connect_count == 1
+
+    @pytest.mark.asyncio
+    async def test_adapter_translates_params_dict_to_kwargs(self) -> None:
+        from aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
+
+        fake_tool = self._make_real_tool_stub()
+        adapter = AgentFrameworkMCPServerAdapter(fake_tool)
+        await adapter.call_tool("read_subconscious_jsonl", {"agent_name": "CMO", "repo": "r"})
+        assert fake_tool.calls[0]["kwargs"] == {"agent_name": "CMO", "repo": "r"}
+
+    @pytest.mark.asyncio
+    async def test_adapter_returns_tool_output(self) -> None:
+        from aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
+
+        fake_tool = self._make_real_tool_stub("subconscious data")
+        adapter = AgentFrameworkMCPServerAdapter(fake_tool)
+        result = await adapter.call_tool("read_subconscious_jsonl", {})
+        assert result == "subconscious data"
+
+
+# ---------------------------------------------------------------------------
+# create_subconscious_provider factory and SUBCONSCIOUS_MCP_URL
+# ---------------------------------------------------------------------------
+
+
+class TestCreateSubconsciousProvider:
+    def test_subconscious_mcp_url_constant(self) -> None:
+        assert SUBCONSCIOUS_MCP_URL == "https://subconscious.asisaga.com/mcp"
+
+    def test_subconscious_mcp_url_exported_from_top_level(self) -> None:
+        assert SUBCONSCIOUS_MCP_URL is _SUBCONSCIOUS_MCP_URL_DIRECT
+
+    def test_create_returns_subconscious_provider(self) -> None:
+        provider = create_subconscious_provider(agent_name="CMO", repo="agent-cmo-repo")
+        assert isinstance(provider, SubconsciousContextProvider)
+
+    def test_create_sets_agent_name(self) -> None:
+        provider = create_subconscious_provider(agent_name="CFO", repo="agent-cfo-repo")
+        assert provider.agent_name == "CFO"
+
+    def test_create_sets_repo(self) -> None:
+        provider = create_subconscious_provider(agent_name="CMO", repo="agent-cmo-repo")
+        assert provider.repo == "agent-cmo-repo"
+
+    def test_create_default_tool_name(self) -> None:
+        provider = create_subconscious_provider(agent_name="CMO", repo="r")
+        assert provider.tool_name == "read_subconscious_jsonl"
+
+    def test_create_custom_tool_name(self) -> None:
+        provider = create_subconscious_provider(
+            agent_name="CMO", repo="r", tool_name="custom_tool"
+        )
+        assert provider.tool_name == "custom_tool"
+
+    def test_create_custom_mcp_url(self) -> None:
+        from aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
+
+        provider = create_subconscious_provider(
+            agent_name="CMO", repo="r", mcp_url="https://staging.asisaga.com/mcp"
+        )
+        # The adapter wraps a real tool with the custom URL
+        adapter = provider.mcp_server
+        assert isinstance(adapter, AgentFrameworkMCPServerAdapter)
+        assert adapter._tool.url == "https://staging.asisaga.com/mcp"
+
+    def test_create_mcp_server_is_adapter(self) -> None:
+        from aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
+
+        provider = create_subconscious_provider(agent_name="CMO", repo="r")
+        assert isinstance(provider.mcp_server, AgentFrameworkMCPServerAdapter)
+
+    def test_create_adapter_wraps_real_tool_with_correct_url(self) -> None:
+        from agent_framework import MCPStreamableHTTPTool
+
+        provider = create_subconscious_provider(agent_name="CMO", repo="r")
+        adapter = provider.mcp_server
+        assert isinstance(adapter._tool, MCPStreamableHTTPTool)
+        assert adapter._tool.url == SUBCONSCIOUS_MCP_URL
