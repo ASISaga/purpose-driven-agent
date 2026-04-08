@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Protocol
 
+from purpose_driven_agent.context_provider import Context, ContextProvider
 from purpose_driven_agent.context_server import ContextMCPServer
 from purpose_driven_agent.ml_interface import IMLService, NoOpMLService
 from aos_mcp_servers.routing import MCPToolDefinition, MCPTransportType
@@ -216,6 +217,7 @@ class PurposeDrivenAgent(_AgentFrameworkBase, ABC):
         config: Optional[Dict[str, Any]] = None,
         aos: Optional[Any] = None,
         ml_service: Optional[IMLService] = None,
+        context_provider: Optional[ContextProvider] = None,
     ) -> None:
         """
         Initialise a Purpose-Driven Agent.
@@ -245,6 +247,13 @@ class PurposeDrivenAgent(_AgentFrameworkBase, ABC):
             ml_service: Optional :class:`IMLService` implementation.  Defaults
                 to :class:`NoOpMLService` which raises ``NotImplementedError``
                 if ML operations are attempted.
+            context_provider: Optional :class:`~purpose_driven_agent.context_provider.ContextProvider`
+                implementation.  When set, the agent calls
+                :meth:`~purpose_driven_agent.context_provider.ContextProvider.get_context`
+                before each event processing cycle and injects the returned
+                instructions into the MCP context server and event result.
+                Use :meth:`set_context_provider` to set or replace it after
+                construction.
         """
         # Initialise agent_framework.Agent base class when available.
         if _AGENT_FRAMEWORK_AVAILABLE:
@@ -311,6 +320,9 @@ class PurposeDrivenAgent(_AgentFrameworkBase, ABC):
         # ---- Optional AOS / ML references ---------------------------------
         self.aos = aos
         self.ml_service: IMLService = ml_service or NoOpMLService()
+
+        # Context pipeline provider (see context_provider module)
+        self.context_provider: Optional[ContextProvider] = context_provider
 
         # ---- Foundry Agent Service registration ----------------------------
         self.foundry_agent_id: Optional[str] = None
@@ -450,6 +462,34 @@ class PurposeDrivenAgent(_AgentFrameworkBase, ABC):
         if thread_id:
             tool.metadata["thread_id"] = thread_id
         return tool
+
+    # ------------------------------------------------------------------
+    # Context pipeline
+    # ------------------------------------------------------------------
+
+    def set_context_provider(self, provider: ContextProvider) -> None:
+        """Register a :class:`~purpose_driven_agent.context_provider.ContextProvider` with this agent.
+
+        The provider is called by :meth:`handle_event` before each processing
+        cycle to inject remote context (e.g. subconscious JSONL data from
+        ``subconscious.asisaga.com``) into the agent's reasoning loop.
+
+        The returned :class:`~purpose_driven_agent.context_provider.Context`
+        instructions are stored in the :class:`ContextMCPServer` under the
+        ``"injected_context"`` key and included in the :meth:`handle_event`
+        response.
+
+        Call this after construction to replace the provider set via the
+        constructor, or to set one for the first time.
+
+        Args:
+            provider: :class:`~purpose_driven_agent.context_provider.ContextProvider`
+                instance to register.
+        """
+        self.context_provider = provider
+        self.logger.info(
+            "Context provider registered: %s", type(provider).__name__
+        )
 
     # ------------------------------------------------------------------
     # AOS persona helpers
@@ -617,8 +657,10 @@ class PurposeDrivenAgent(_AgentFrameworkBase, ABC):
         Handle an event with purpose-driven processing.
 
         This is the core of the perpetual model: the agent awakens,
-        evaluates purpose alignment, dispatches to subscribed handlers,
-        saves context via MCP, then returns to sleep.
+        evaluates purpose alignment, fetches injected context via the
+        registered :class:`~purpose_driven_agent.context_provider.ContextProvider`
+        (if any), dispatches to subscribed handlers, saves context via MCP,
+        then returns to sleep.
 
         Args:
             event: Event payload dict.  The ``"type"`` key is used for
@@ -631,6 +673,8 @@ class PurposeDrivenAgent(_AgentFrameworkBase, ABC):
             - ``"processed_by"`` — agent ID.
             - ``"purpose_alignment"`` — alignment evaluation result.
             - ``"purpose"`` — this agent's purpose string.
+            - ``"injected_context"`` — instruction string from the context
+              provider (``None`` when no provider is set).
         """
         try:
             alignment = await self.evaluate_purpose_alignment(event)
@@ -639,6 +683,23 @@ class PurposeDrivenAgent(_AgentFrameworkBase, ABC):
 
             await self._awaken()
             await self.select_mcp_servers_for_event(event)
+
+            # Fetch and inject remote context before processing the event
+            injected_context: Optional[str] = None
+            if self.context_provider:
+                ctx: Context = await self.context_provider.get_context(
+                    messages=[event]
+                )
+                injected_context = ctx.instructions or None
+                if self.mcp_context_server and injected_context:
+                    await self.mcp_context_server.set_context(
+                        "injected_context", injected_context
+                    )
+                self.logger.debug(
+                    "Agent '%s' injected context (%d chars)",
+                    self.agent_id,
+                    len(injected_context) if injected_context else 0,
+                )
 
             event_type = event.get("type")
             self.logger.info(
@@ -665,6 +726,7 @@ class PurposeDrivenAgent(_AgentFrameworkBase, ABC):
 
             result["purpose_alignment"] = alignment
             result["purpose"] = self.purpose
+            result["injected_context"] = injected_context
 
             await self._sleep()
             return result

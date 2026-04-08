@@ -8,6 +8,9 @@ Exports:
     MCPServerProtocol: Structural protocol for MCP servers registered with agents.
     IMLService: Abstract ML service interface for LoRA training and inference.
     NoOpMLService: No-operation ML service (raises NotImplementedError on use).
+    Context: Structured context object for LLM reasoning injection.
+    ContextProvider: Abstract base class for agent context providers.
+    SubconsciousContextProvider: ContextProvider that reads JSONL data from an MCP server.
 
 MCP transport types and configuration models are available through the AOS
 Client SDK (``aos_client.mcp``)::
@@ -27,6 +30,11 @@ from purpose_driven_agent.agent import (
     MCPServerProtocol,
     PurposeDrivenAgent,
 )
+from purpose_driven_agent.context_provider import (
+    Context,
+    ContextProvider,
+    SubconsciousContextProvider,
+)
 from purpose_driven_agent.context_server import ContextMCPServer
 from purpose_driven_agent.ml_interface import IMLService, NoOpMLService
 
@@ -38,6 +46,9 @@ __all__ = [
     "MCPServerProtocol",
     "IMLService",
     "NoOpMLService",
+    "Context",
+    "ContextProvider",
+    "SubconsciousContextProvider",
 ]
 
 __version__ = "1.0.0"
