@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asisaga.com/schemas/mind/buddhi.schema.json",
+  "title": "Buddhi — Agent Intellect",
+  "description": "Schema for boardroom/mind/{agent_id}/Buddhi/buddhi.jsonld. Buddhi is the legend-derived intellect layer encoding domain_knowledge, skills, persona, and language as a standalone document loaded independently by BoardroomStateManager.load_agent_buddhi().",
+  "type": "object",
+  "required": [
+    "@context",
+    "@id",
+    "@type",
+    "schema_version",
+    "agent_id",
+    "name",
+    "domain",
+    "domain_knowledge",
+    "skills",
+    "persona",
+    "language"
+  ],
+  "properties": {
+    "@context": {
+      "type": "string",
+      "const": "https://asisaga.com/contexts/buddhi.jsonld"
+    },
+    "@id": {
+      "type": "string",
+      "pattern": "^agent:[a-z_]+/buddhi$",
+      "description": "e.g. agent:ceo/buddhi"
+    },
+    "@type": {
+      "type": "string",
+      "const": "Buddhi"
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "agent_id": {
+      "type": "string",
+      "description": "Agent identifier matching the boardroom roster, e.g. ceo"
+    },
+    "name": {
+      "type": "string",
+      "description": "Legend name, e.g. Steve Jobs"
+    },
+    "domain": {
+      "type": "string",
+      "description": "Domain mandate, e.g. Vision & Strategy"
+    },
+    "domain_knowledge": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 4,
+      "description": "Deep expertise areas unique to the legend"
+    },
+    "skills": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 4,
+      "description": "Concrete capabilities the agent deploys"
+    },
+    "persona": {
+      "type": "string",
+      "description": "Rich identity and approach description"
+    },
+    "language": {
+      "type": "string",
+      "description": "Vocabulary, idioms, and reasoning style"
+    }
+  }
+}

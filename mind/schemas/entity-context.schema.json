@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asisaga.com/schemas/mind/entity-context.schema.json",
+  "title": "Entity Context Perspective — Immutable",
+  "description": "Schema for boardroom/mind/{agent_id}/Manas/context/{entity}.jsonld. The context perspective holds the agent's immutable, legend-derived knowledge about a shared entity (company or product). It encodes what this legend natively understands about the entity — never updated at runtime.",
+  "type": "object",
+  "required": [
+    "@context",
+    "@id",
+    "@type",
+    "name",
+    "agent_perspective",
+    "legend",
+    "domain_knowledge",
+    "skills",
+    "persona",
+    "language"
+  ],
+  "properties": {
+    "@context": {
+      "type": "string",
+      "description": "JSON-LD context URI for the entity type"
+    },
+    "@id": {
+      "type": "string",
+      "description": "Entity identifier, e.g. asi:saga or bi:product:core"
+    },
+    "@type": {
+      "type": "string",
+      "description": "Entity type, e.g. SagaEntity or SoftwareProduct"
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable entity name"
+    },
+    "agent_perspective": {
+      "type": "string",
+      "pattern": "^agent:[a-z_]+$",
+      "description": "Agent identifier this perspective belongs to, e.g. agent:ceo"
+    },
+    "legend": {
+      "type": "string",
+      "description": "Legend name for this agent, e.g. Steve Jobs"
+    },
+    "domain_knowledge": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "description": "Entity-specific domain knowledge from the legend's perspective"
+    },
+    "skills": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "description": "Entity-specific skills this agent applies"
+    },
+    "persona": {
+      "type": "string",
+      "description": "How this agent presents itself when engaging with this entity"
+    },
+    "language": {
+      "type": "string",
+      "description": "Language and communication style applied to this entity"
+    }
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asisaga.com/schemas/mind/chitta.schema.json",
+  "title": "Chitta — Pure Intelligence",
+  "description": "Schema for boardroom/mind/{agent_id}/Chitta/chitta.jsonld (v2.0.0). Chitta is mind without memory — pure cosmic intelligence. It connects the agent to the basis of creation, transcending identity (Ahankara), intellect (Buddhi), and memory (Manas). Loaded independently by BoardroomStateManager.load_agent_chitta().",
+  "type": "object",
+  "required": [
+    "@context",
+    "@id",
+    "@type",
+    "schema_version",
+    "agent_id",
+    "name",
+    "intelligence_nature",
+    "cosmic_intelligence",
+    "beyond_identity",
+    "consciousness_basis"
+  ],
+  "properties": {
+    "@context": {
+      "type": "string",
+      "const": "https://asisaga.com/contexts/chitta.jsonld"
+    },
+    "@id": {
+      "type": "string",
+      "pattern": "^agent:[a-z_]+/chitta$",
+      "description": "e.g. agent:ceo/chitta"
+    },
+    "@type": {
+      "type": "string",
+      "const": "Chitta"
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "2.0.0",
+      "description": "Must be 2.0.0. v1.x used pure_intelligence[] (replaced) and cosmic_connection (renamed)."
+    },
+    "agent_id": {
+      "type": "string",
+      "description": "Agent identifier matching the boardroom roster, e.g. ceo"
+    },
+    "name": {
+      "type": "string",
+      "description": "Legend name, e.g. Steve Jobs"
+    },
+    "intelligence_nature": {
+      "type": "string",
+      "description": "The quality of pure intelligence that IS this being — not what it knows or believes, but the nature of the awareness from which knowing arises. No memory, no analysis — simply present."
+    },
+    "cosmic_intelligence": {
+      "type": "string",
+      "description": "How this pure intelligence participates in and expresses the cosmic intelligence underlying all creation — the living mind of the cosmos in this form."
+    },
+    "beyond_identity": {
+      "type": "string",
+      "description": "What remains when Ahankara falls away — the pure perceiving before any role, persona, or self-concept applies."
+    },
+    "consciousness_basis": {
+      "type": "string",
+      "description": "Connection to the very basis of creation within — the ground from which all genuine creative acts arise, prior to memory, intellect, and identity."
+    }
+  },
+  "not": {
+    "anyOf": [
+      { "required": ["pure_intelligence"] },
+      { "required": ["cosmic_connection"] }
+    ]
+  },
+  "$comment": "v1.x fields pure_intelligence[] and cosmic_connection are prohibited in v2.0.0. Domain aphorisms belong in Buddhi; identity axioms belong in Ahankara."
+}

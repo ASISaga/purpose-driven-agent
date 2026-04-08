@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asisaga.com/schemas/mind/entity-content.schema.json",
+  "title": "Entity Content Perspective — Mutable",
+  "description": "Schema for boardroom/mind/{agent_id}/Manas/content/{entity}.jsonld. The content perspective holds the agent's mutable, evolving signals about a shared entity (company or product). It captures the agent's current interpretation, active software interfaces, and live signals — updated as the agent accumulates experience.",
+  "type": "object",
+  "required": [
+    "@context",
+    "@id",
+    "@type",
+    "name",
+    "agent_perspective",
+    "legend",
+    "perspective",
+    "software_interfaces",
+    "current_signals"
+  ],
+  "properties": {
+    "@context": {
+      "type": "string",
+      "description": "JSON-LD context URI for the entity type"
+    },
+    "@id": {
+      "type": "string",
+      "description": "Entity identifier, e.g. asi:saga or bi:product:core"
+    },
+    "@type": {
+      "type": "string",
+      "description": "Entity type, e.g. SagaEntity or SoftwareProduct"
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable entity name"
+    },
+    "agent_perspective": {
+      "type": "string",
+      "pattern": "^agent:[a-z_]+$",
+      "description": "Agent identifier this perspective belongs to, e.g. agent:ceo"
+    },
+    "legend": {
+      "type": "string",
+      "description": "Legend name for this agent, e.g. Steve Jobs"
+    },
+    "perspective": {
+      "type": "string",
+      "description": "Agent's active interpretive lens on this entity"
+    },
+    "software_interfaces": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "description": "Active software tools and interfaces the agent uses to interact with this entity"
+    },
+    "current_signals": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "description": "Live signals and observations the agent is tracking about this entity"
+    }
+  }
+}

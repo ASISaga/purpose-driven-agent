@@ -1,0 +1,220 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asisaga.com/schemas/mind/manas.schema.json",
+  "title": "Manas — Agent Memory State",
+  "description": "Schema for boardroom/mind/{agent_id}/Manas/{agent_id}.jsonld. Manas is the agent's live memory state with immutable context and mutable content layers.",
+  "type": "object",
+  "required": [
+    "@context",
+    "@id",
+    "@type",
+    "schema_version",
+    "context",
+    "context_management",
+    "content",
+    "content_management"
+  ],
+  "properties": {
+    "@context": {
+      "type": "string",
+      "const": "https://asisaga.com/contexts/agent.jsonld"
+    },
+    "@id": {
+      "type": "string",
+      "pattern": "^agent:[a-z_]+$",
+      "description": "Canonical JSON-LD identifier for the agent, e.g. agent:ceo"
+    },
+    "@type": {
+      "type": "string",
+      "description": "Agent type, e.g. CEOAgent, CFOAgent"
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "2.0.0"
+    },
+    "context": {
+      "$ref": "#/$defs/AgentContext"
+    },
+    "context_management": {
+      "$ref": "#/$defs/LayerManagement"
+    },
+    "content": {
+      "$ref": "#/$defs/AgentContent"
+    },
+    "content_management": {
+      "$ref": "#/$defs/LayerManagement"
+    }
+  },
+  "$defs": {
+    "AgentContext": {
+      "title": "AgentContext",
+      "description": "Immutable identity and mandate for the agent, derived from the legend archetype.",
+      "type": "object",
+      "required": [
+        "name",
+        "fixed_mandate",
+        "core_logic",
+        "immutable_constraints",
+        "domain_knowledge",
+        "skills",
+        "persona",
+        "language"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Legend name, e.g. Steve Jobs"
+        },
+        "fixed_mandate": {
+          "type": "string",
+          "description": "Domain mandate, e.g. Vision & Strategy"
+        },
+        "core_logic": {
+          "type": "string",
+          "description": "Defining maxim of the legend — 1–3 sentences"
+        },
+        "immutable_constraints": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "description": "Read-only guiding principles"
+        },
+        "domain_knowledge": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 4,
+          "description": "Deep expertise areas of the legend"
+        },
+        "skills": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 4,
+          "description": "Concrete capabilities the agent deploys"
+        },
+        "persona": {
+          "type": "string",
+          "description": "Rich identity and approach description"
+        },
+        "language": {
+          "type": "string",
+          "description": "Vocabulary, idioms, and reasoning style"
+        }
+      }
+    },
+    "AgentContent": {
+      "title": "AgentContent",
+      "description": "Mutable working memory and active intent for the agent.",
+      "type": "object",
+      "required": [
+        "current_focus",
+        "active_strategy",
+        "short_term_memory",
+        "spontaneous_intent",
+        "company_state",
+        "product_state"
+      ],
+      "properties": {
+        "current_focus": {
+          "type": "string",
+          "description": "What the agent is actively working on"
+        },
+        "active_strategy": {
+          "type": "string",
+          "description": "Current strategic approach"
+        },
+        "short_term_memory": {
+          "type": "string",
+          "description": "Recent context in the agent's working memory"
+        },
+        "spontaneous_intent": {
+          "type": "string",
+          "description": "Autonomous intent that has emerged without external prompt"
+        },
+        "company_state": {
+          "$ref": "#/$defs/EntityPerspective",
+          "description": "Agent perspective on ASI Saga (the company)"
+        },
+        "product_state": {
+          "$ref": "#/$defs/EntityPerspective",
+          "description": "Agent perspective on Business Infinity (the product)"
+        }
+      }
+    },
+    "EntityPerspective": {
+      "title": "EntityPerspective",
+      "description": "An agent's combined perspective on a shared entity, merging context and content layers.",
+      "type": "object",
+      "required": [
+        "entity_id",
+        "entity_name",
+        "perspective",
+        "domain_knowledge",
+        "skills",
+        "persona",
+        "language",
+        "software_interfaces",
+        "current_signals"
+      ],
+      "properties": {
+        "entity_id": {
+          "type": "string",
+          "description": "Canonical entity identifier, e.g. asi:saga"
+        },
+        "entity_name": {
+          "type": "string",
+          "description": "Human-readable entity name"
+        },
+        "perspective": {
+          "type": "string",
+          "description": "Agent's interpretive lens on this entity"
+        },
+        "domain_knowledge": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "skills": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "persona": {
+          "type": "string"
+        },
+        "language": {
+          "type": "string"
+        },
+        "software_interfaces": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "current_signals": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        }
+      }
+    },
+    "LayerManagement": {
+      "title": "LayerManagement",
+      "description": "Management metadata for a state layer (context or content).",
+      "type": "object",
+      "required": ["access", "mutability", "manager"],
+      "properties": {
+        "access": {
+          "type": "string",
+          "enum": ["read-only", "full-control"]
+        },
+        "mutability": {
+          "type": "string",
+          "enum": ["immutable", "mutable"]
+        },
+        "manager": {
+          "type": "string",
+          "description": "BoardroomStateManager method that manages this layer"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asisaga.com/schemas/mind/ahankara.schema.json",
+  "title": "Ahankara — Agent Identity",
+  "description": "Schema for boardroom/mind/{agent_id}/Ahankara/ahankara.jsonld. Ahankara is the identity/ego dimension — the sense of self that gives the intellect (Buddhi) its contextual axis. Loaded independently by BoardroomStateManager.load_agent_ahankara().",
+  "type": "object",
+  "required": [
+    "@context",
+    "@id",
+    "@type",
+    "schema_version",
+    "agent_id",
+    "name",
+    "identity",
+    "contextual_axis",
+    "non_negotiables",
+    "identity_markers",
+    "intellect_constraint"
+  ],
+  "properties": {
+    "@context": {
+      "type": "string",
+      "const": "https://asisaga.com/contexts/ahankara.jsonld"
+    },
+    "@id": {
+      "type": "string",
+      "pattern": "^agent:[a-z_]+/ahankara$",
+      "description": "e.g. agent:ceo/ahankara"
+    },
+    "@type": {
+      "type": "string",
+      "const": "Ahankara"
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "agent_id": {
+      "type": "string",
+      "description": "Agent identifier matching the boardroom roster, e.g. ceo"
+    },
+    "name": {
+      "type": "string",
+      "description": "Legend name, e.g. Steve Jobs"
+    },
+    "identity": {
+      "type": "string",
+      "description": "Core self-concept — who this legend fundamentally is"
+    },
+    "contextual_axis": {
+      "type": "string",
+      "description": "The axis along which all reasoning flows"
+    },
+    "non_negotiables": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "description": "Identity commitments that cannot be violated without destroying the self"
+    },
+    "identity_markers": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "description": "How this identity is expressed and recognized in practice"
+    },
+    "intellect_constraint": {
+      "type": "string",
+      "description": "How this Ahankara shapes and limits the Buddhi to its domain axis"
+    },
+    "chitta_coloring": {
+      "type": "string",
+      "description": "How this identity lens colors the pure light of Chitta — the personal flavor that the Ahankara adds to undivided cosmic intelligence, creating the agent's distinctive perception of knowing."
+    }
+  }
+}

@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asisaga.com/schemas/mind/action-plan.schema.json",
+  "title": "AgentActionPlan — Buddhi Action Plan",
+  "description": "Schema for boardroom/mind/{agent_id}/Buddhi/action-plan.jsonld. Each action plan captures the agent's steps toward the initial company purpose — development of the Business Infinity MVP — expressed from the legend's own perspective and language.",
+  "type": "object",
+  "required": [
+    "@context",
+    "@type",
+    "name",
+    "role",
+    "anchor",
+    "status",
+    "overarchingPurpose",
+    "actionSteps"
+  ],
+  "properties": {
+    "@context": {
+      "type": "string",
+      "description": "JSON-LD context URI"
+    },
+    "@type": {
+      "type": "string",
+      "description": "Action plan type, e.g. AgentActionPlan or FounderActionPlan"
+    },
+    "name": {
+      "type": "string",
+      "description": "Legend name, e.g. Steve Jobs"
+    },
+    "role": {
+      "type": "string",
+      "description": "Agent role abbreviation, e.g. CEO"
+    },
+    "anchor": {
+      "type": "string",
+      "description": "Unique anchor key for this plan, e.g. Vision_and_Insanely_Great"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["Active_Execution", "Pending", "Completed"],
+      "description": "Execution status of the plan"
+    },
+    "overarchingPurpose": {
+      "type": "object",
+      "required": ["@id", "description"],
+      "properties": {
+        "@id": {
+          "type": "string",
+          "description": "URI for the overarching purpose"
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable purpose description"
+        }
+      }
+    },
+    "actionSteps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["@type", "stepId", "taskName", "logic"],
+        "properties": {
+          "@type": {
+            "type": "string",
+            "const": "Task"
+          },
+          "stepId": {
+            "type": "string",
+            "description": "Unique step identifier, e.g. CEO_001"
+          },
+          "taskName": {
+            "type": "string",
+            "description": "Descriptive task name in snake_case"
+          },
+          "logic": {
+            "type": "string",
+            "description": "Action logic expressed from the legend's perspective and language"
+          }
+        }
+      }
+    }
+  }
+}
