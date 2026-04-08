@@ -6,9 +6,12 @@ Coverage targets
 ----------------
 - Context dataclass stores instructions and messages.
 - ContextProvider is abstract and cannot be instantiated directly.
-- SubconsciousContextProvider calls the configured MCP tool and returns Context.
+- SubconsciousContextProvider calls get_conversation and returns Context.
 - SubconsciousContextProvider handles MCP call failures gracefully.
 - SubconsciousContextProvider normalises dict, list, and str MCP outputs.
+- SubconsciousContextProvider.persist_message calls persist_message tool.
+- SubconsciousContextProvider.persist_conversation_turn calls persist_conversation_turn tool.
+- SubconsciousContextProvider persistence methods return None on failure.
 - Agent.set_context_provider registers the provider.
 - handle_event includes "injected_context" in the result.
 - handle_event stores injected_context in the MCP context server.
@@ -45,7 +48,7 @@ from purpose_driven_agent.context_provider import (
 class StubMCPServer:
     """Minimal MCP server stub that records calls and returns a fixed output."""
 
-    def __init__(self, output: object = "subconscious data line 1") -> None:
+    def __init__(self, output: object = "conversation history line 1") -> None:
         self.calls: list = []
         self._output = output
 
@@ -130,71 +133,86 @@ class TestSubconsciousContextProvider:
         server = StubMCPServer()
         provider = SubconsciousContextProvider(
             mcp_server=server,
-            agent_name="CMO",
-            repo="agent-cmo-repo",
+            orchestration_id="orch-cmo-q2",
         )
-        assert provider.agent_name == "CMO"
-        assert provider.repo == "agent-cmo-repo"
-        assert provider.tool_name == "read_subconscious_jsonl"
+        assert provider.orchestration_id == "orch-cmo-q2"
+        assert provider.tool_name == "get_conversation"
+        assert provider.limit == 200
 
     def test_custom_tool_name(self) -> None:
         server = StubMCPServer()
         provider = SubconsciousContextProvider(
             mcp_server=server,
-            agent_name="CMO",
-            repo="agent-cmo-repo",
+            orchestration_id="orch-cmo-q2",
             tool_name="custom_tool",
         )
         assert provider.tool_name == "custom_tool"
 
-    @pytest.mark.asyncio
-    async def test_get_context_calls_mcp_tool(self) -> None:
-        server = StubMCPServer("raw jsonl content")
-        provider = SubconsciousContextProvider(
-            mcp_server=server,
-            agent_name="CMO",
-            repo="agent-cmo-repo",
-        )
-        await provider.get_context(messages=[])
-        assert len(server.calls) == 1
-        assert server.calls[0]["tool"] == "read_subconscious_jsonl"
-
-    @pytest.mark.asyncio
-    async def test_get_context_passes_agent_identity(self) -> None:
+    def test_custom_limit(self) -> None:
         server = StubMCPServer()
         provider = SubconsciousContextProvider(
             mcp_server=server,
-            agent_name="CFO",
-            repo="agent-cfo-repo",
+            orchestration_id="orch-cmo-q2",
+            limit=50,
+        )
+        assert provider.limit == 50
+
+    @pytest.mark.asyncio
+    async def test_get_context_calls_get_conversation_tool(self) -> None:
+        server = StubMCPServer("raw conversation content")
+        provider = SubconsciousContextProvider(
+            mcp_server=server,
+            orchestration_id="orch-cmo-q2",
+        )
+        await provider.get_context(messages=[])
+        assert len(server.calls) == 1
+        assert server.calls[0]["tool"] == "get_conversation"
+
+    @pytest.mark.asyncio
+    async def test_get_context_passes_orchestration_id(self) -> None:
+        server = StubMCPServer()
+        provider = SubconsciousContextProvider(
+            mcp_server=server,
+            orchestration_id="orch-cfo-q3",
         )
         await provider.get_context(messages=[])
         params = server.calls[0]["params"]
-        assert params["agent_name"] == "CFO"
-        assert params["repo"] == "agent-cfo-repo"
+        assert params["orchestration_id"] == "orch-cfo-q3"
 
     @pytest.mark.asyncio
-    async def test_instructions_contain_primary_context_header(self) -> None:
-        server = StubMCPServer("my jsonl data")
+    async def test_get_context_passes_limit(self) -> None:
+        server = StubMCPServer()
         provider = SubconsciousContextProvider(
-            mcp_server=server, agent_name="CMO", repo="repo"
+            mcp_server=server,
+            orchestration_id="orch-cmo-q2",
+            limit=42,
+        )
+        await provider.get_context(messages=[])
+        assert server.calls[0]["params"]["limit"] == 42
+
+    @pytest.mark.asyncio
+    async def test_instructions_contain_conversation_history_header(self) -> None:
+        server = StubMCPServer("my conversation data")
+        provider = SubconsciousContextProvider(
+            mcp_server=server, orchestration_id="orch-cmo-q2"
         )
         ctx = await provider.get_context(messages=[])
-        assert ctx.instructions.startswith("PRIMARY SUBCONSCIOUS CONTEXT:\n")
+        assert ctx.instructions.startswith("CONVERSATION HISTORY:\n")
 
     @pytest.mark.asyncio
     async def test_instructions_contain_raw_output(self) -> None:
-        server = StubMCPServer("raw data line")
+        server = StubMCPServer("raw conversation line")
         provider = SubconsciousContextProvider(
-            mcp_server=server, agent_name="CMO", repo="repo"
+            mcp_server=server, orchestration_id="orch-cmo-q2"
         )
         ctx = await provider.get_context(messages=[])
-        assert "raw data line" in ctx.instructions
+        assert "raw conversation line" in ctx.instructions
 
     @pytest.mark.asyncio
     async def test_messages_passed_through(self) -> None:
         server = StubMCPServer()
         provider = SubconsciousContextProvider(
-            mcp_server=server, agent_name="CMO", repo="repo"
+            mcp_server=server, orchestration_id="orch-cmo-q2"
         )
         msgs = [{"type": "strategy_review"}]
         ctx = await provider.get_context(messages=msgs)
@@ -202,19 +220,18 @@ class TestSubconsciousContextProvider:
 
     @pytest.mark.asyncio
     async def test_dict_output_normalised_to_json_string(self) -> None:
-        server = StubMCPServer({"content": "structured data", "score": 0.9})
+        server = StubMCPServer({"messages": [{"content": "structured data"}], "total": 1})
         provider = SubconsciousContextProvider(
-            mcp_server=server, agent_name="CMO", repo="repo"
+            mcp_server=server, orchestration_id="orch-cmo-q2"
         )
         ctx = await provider.get_context(messages=[])
         assert "structured data" in ctx.instructions
-        assert "0.9" in ctx.instructions
 
     @pytest.mark.asyncio
     async def test_list_output_normalised_to_json_string(self) -> None:
         server = StubMCPServer(["item1", "item2"])
         provider = SubconsciousContextProvider(
-            mcp_server=server, agent_name="CMO", repo="repo"
+            mcp_server=server, orchestration_id="orch-cmo-q2"
         )
         ctx = await provider.get_context(messages=[])
         assert "item1" in ctx.instructions
@@ -224,7 +241,7 @@ class TestSubconsciousContextProvider:
     async def test_failing_mcp_returns_empty_instructions(self) -> None:
         server = FailingMCPServer()
         provider = SubconsciousContextProvider(
-            mcp_server=server, agent_name="CMO", repo="repo"
+            mcp_server=server, orchestration_id="orch-cmo-q2"
         )
         ctx = await provider.get_context(messages=[])
         assert ctx.instructions == ""
@@ -233,11 +250,75 @@ class TestSubconsciousContextProvider:
     async def test_failing_mcp_still_passes_messages(self) -> None:
         server = FailingMCPServer()
         provider = SubconsciousContextProvider(
-            mcp_server=server, agent_name="CMO", repo="repo"
+            mcp_server=server, orchestration_id="orch-cmo-q2"
         )
         msgs = [{"type": "fallback"}]
         ctx = await provider.get_context(messages=msgs)
         assert ctx.messages == msgs
+
+    @pytest.mark.asyncio
+    async def test_persist_message_calls_tool(self) -> None:
+        server = StubMCPServer({"sequence": "0001", "timestamp": "2026-04-08"})
+        provider = SubconsciousContextProvider(
+            mcp_server=server, orchestration_id="orch-cmo-q2"
+        )
+        await provider.persist_message(agent_id="cmo", role="assistant", content="Done.")
+        assert len(server.calls) == 1
+        call = server.calls[0]
+        assert call["tool"] == "persist_message"
+        assert call["params"]["orchestration_id"] == "orch-cmo-q2"
+        assert call["params"]["agent_id"] == "cmo"
+        assert call["params"]["role"] == "assistant"
+        assert call["params"]["content"] == "Done."
+
+    @pytest.mark.asyncio
+    async def test_persist_message_passes_metadata(self) -> None:
+        server = StubMCPServer({})
+        provider = SubconsciousContextProvider(
+            mcp_server=server, orchestration_id="orch-cmo-q2"
+        )
+        meta = {"source": "event_handler"}
+        await provider.persist_message(
+            agent_id="cmo", role="assistant", content="ok", metadata=meta
+        )
+        assert server.calls[0]["params"]["metadata"] == meta
+
+    @pytest.mark.asyncio
+    async def test_persist_message_returns_none_on_failure(self) -> None:
+        server = FailingMCPServer()
+        provider = SubconsciousContextProvider(
+            mcp_server=server, orchestration_id="orch-cmo-q2"
+        )
+        result = await provider.persist_message(
+            agent_id="cmo", role="assistant", content="hello"
+        )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_persist_conversation_turn_calls_tool(self) -> None:
+        server = StubMCPServer({"persisted": 2, "messages": []})
+        provider = SubconsciousContextProvider(
+            mcp_server=server, orchestration_id="orch-cmo-q2"
+        )
+        msgs = [
+            {"agent_id": "cmo", "role": "assistant", "content": "A"},
+            {"agent_id": "cfo", "role": "user", "content": "B"},
+        ]
+        await provider.persist_conversation_turn(msgs)
+        assert len(server.calls) == 1
+        call = server.calls[0]
+        assert call["tool"] == "persist_conversation_turn"
+        assert call["params"]["orchestration_id"] == "orch-cmo-q2"
+        assert call["params"]["messages"] == msgs
+
+    @pytest.mark.asyncio
+    async def test_persist_conversation_turn_returns_none_on_failure(self) -> None:
+        server = FailingMCPServer()
+        provider = SubconsciousContextProvider(
+            mcp_server=server, orchestration_id="orch-cmo-q2"
+        )
+        result = await provider.persist_conversation_turn([])
+        assert result is None
 
 
 # ---------------------------------------------------------------------------
@@ -321,17 +402,16 @@ class TestAgentContextProviderIntegration:
     async def test_handle_event_with_subconscious_provider(
         self, init_agent: GenericPurposeDrivenAgent
     ) -> None:
-        server = StubMCPServer("agent subconscious data")
+        server = StubMCPServer("conversation data here")
         provider = SubconsciousContextProvider(
             mcp_server=server,
-            agent_name="CMO",
-            repo="agent-cmo-repo",
+            orchestration_id="orch-cmo-q2",
         )
         init_agent.set_context_provider(provider)
         result = await init_agent.handle_event({"type": "strategy_review"})
         assert result["status"] == "success"
-        assert "PRIMARY SUBCONSCIOUS CONTEXT:" in result["injected_context"]
-        assert "agent subconscious data" in result["injected_context"]
+        assert "CONVERSATION HISTORY:" in result["injected_context"]
+        assert "conversation data here" in result["injected_context"]
 
     @pytest.mark.asyncio
     async def test_handle_event_passes_event_as_message_to_provider(
@@ -356,7 +436,7 @@ class TestAgentContextProviderIntegration:
     ) -> None:
         server = FailingMCPServer()
         provider = SubconsciousContextProvider(
-            mcp_server=server, agent_name="CMO", repo="repo"
+            mcp_server=server, orchestration_id="orch-cmo-q2"
         )
         init_agent.set_context_provider(provider)
         result = await init_agent.handle_event({"type": "test"})
@@ -442,17 +522,17 @@ class TestAgentFrameworkMCPServerAdapter:
 
         fake_tool = self._make_real_tool_stub()
         adapter = AgentFrameworkMCPServerAdapter(fake_tool)
-        await adapter.call_tool("read_subconscious_jsonl", {"agent_name": "CMO", "repo": "r"})
-        assert fake_tool.calls[0]["kwargs"] == {"agent_name": "CMO", "repo": "r"}
+        await adapter.call_tool("get_conversation", {"orchestration_id": "orch-1", "limit": 200})
+        assert fake_tool.calls[0]["kwargs"] == {"orchestration_id": "orch-1", "limit": 200}
 
     @pytest.mark.asyncio
     async def test_adapter_returns_tool_output(self) -> None:
         from aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
 
-        fake_tool = self._make_real_tool_stub("subconscious data")
+        fake_tool = self._make_real_tool_stub("conversation history")
         adapter = AgentFrameworkMCPServerAdapter(fake_tool)
-        result = await adapter.call_tool("read_subconscious_jsonl", {})
-        assert result == "subconscious data"
+        result = await adapter.call_tool("get_conversation", {})
+        assert result == "conversation history"
 
 
 # ---------------------------------------------------------------------------
@@ -468,34 +548,37 @@ class TestCreateSubconsciousProvider:
         assert SUBCONSCIOUS_MCP_URL is _SUBCONSCIOUS_MCP_URL_DIRECT
 
     def test_create_returns_subconscious_provider(self) -> None:
-        provider = create_subconscious_provider(agent_name="CMO", repo="agent-cmo-repo")
+        provider = create_subconscious_provider(orchestration_id="orch-cmo-q2")
         assert isinstance(provider, SubconsciousContextProvider)
 
-    def test_create_sets_agent_name(self) -> None:
-        provider = create_subconscious_provider(agent_name="CFO", repo="agent-cfo-repo")
-        assert provider.agent_name == "CFO"
-
-    def test_create_sets_repo(self) -> None:
-        provider = create_subconscious_provider(agent_name="CMO", repo="agent-cmo-repo")
-        assert provider.repo == "agent-cmo-repo"
+    def test_create_sets_orchestration_id(self) -> None:
+        provider = create_subconscious_provider(orchestration_id="orch-cfo-q3")
+        assert provider.orchestration_id == "orch-cfo-q3"
 
     def test_create_default_tool_name(self) -> None:
-        provider = create_subconscious_provider(agent_name="CMO", repo="r")
-        assert provider.tool_name == "read_subconscious_jsonl"
+        provider = create_subconscious_provider(orchestration_id="orch-cmo-q2")
+        assert provider.tool_name == "get_conversation"
+
+    def test_create_default_limit(self) -> None:
+        provider = create_subconscious_provider(orchestration_id="orch-cmo-q2")
+        assert provider.limit == 200
 
     def test_create_custom_tool_name(self) -> None:
         provider = create_subconscious_provider(
-            agent_name="CMO", repo="r", tool_name="custom_tool"
+            orchestration_id="orch-cmo-q2", tool_name="custom_tool"
         )
         assert provider.tool_name == "custom_tool"
+
+    def test_create_custom_limit(self) -> None:
+        provider = create_subconscious_provider(orchestration_id="orch-cmo-q2", limit=50)
+        assert provider.limit == 50
 
     def test_create_custom_mcp_url(self) -> None:
         from aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
 
         provider = create_subconscious_provider(
-            agent_name="CMO", repo="r", mcp_url="https://staging.asisaga.com/mcp"
+            orchestration_id="orch-cmo-q2", mcp_url="https://staging.asisaga.com/mcp"
         )
-        # The adapter wraps a real tool with the custom URL
         adapter = provider.mcp_server
         assert isinstance(adapter, AgentFrameworkMCPServerAdapter)
         assert adapter._tool.url == "https://staging.asisaga.com/mcp"
@@ -503,13 +586,13 @@ class TestCreateSubconsciousProvider:
     def test_create_mcp_server_is_adapter(self) -> None:
         from aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
 
-        provider = create_subconscious_provider(agent_name="CMO", repo="r")
+        provider = create_subconscious_provider(orchestration_id="orch-cmo-q2")
         assert isinstance(provider.mcp_server, AgentFrameworkMCPServerAdapter)
 
     def test_create_adapter_wraps_real_tool_with_correct_url(self) -> None:
         from agent_framework import MCPStreamableHTTPTool
 
-        provider = create_subconscious_provider(agent_name="CMO", repo="r")
+        provider = create_subconscious_provider(orchestration_id="orch-cmo-q2")
         adapter = provider.mcp_server
         assert isinstance(adapter._tool, MCPStreamableHTTPTool)
         assert adapter._tool.url == SUBCONSCIOUS_MCP_URL

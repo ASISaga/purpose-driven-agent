@@ -2,46 +2,39 @@
 context_provider — Bridge for injecting remote MCP context into agent reasoning.
 
 This module implements the Context Pipeline described in ``pr/context.md``.
-It bridges remote MCP server data (such as JSONL "subconscious" data from
-``subconscious.asisaga.com``) into the :class:`~purpose_driven_agent.PurposeDrivenAgent`
-reasoning loop.
+It integrates with the ``subconscious.asisaga.com`` MCP server — a multi-agent
+**conversation persistence** service — to inject prior conversation history
+into the :class:`~purpose_driven_agent.PurposeDrivenAgent` reasoning loop,
+and to persist new messages produced by the agent.
 
 Architecture
 ------------
 The pipeline has three layers:
 
-1. **MCP server** — hosts the raw data (JSONL, structured context, etc.).
-2. **ContextProvider** — calls an MCP tool to fetch and engineer the data
-   into a structured :class:`Context` object.
+1. **MCP server** (``subconscious.asisaga.com/mcp``) — hosts orchestration
+   records and conversation history in Azure Table Storage.
+2. **SubconsciousContextProvider** — calls ``get_conversation`` to retrieve
+   history for a given orchestration and engineers it into a structured
+   :class:`Context` object.  Also exposes ``persist_message`` and
+   ``persist_conversation_turn`` to write new messages back to the server.
 3. **PurposeDrivenAgent** — injects the ``Context.instructions`` into its
-   reasoning loop and persists them via :class:`~purpose_driven_agent.ContextMCPServer`.
+   reasoning loop and caches them via :class:`~purpose_driven_agent.ContextMCPServer`.
 
 Key advantages
 --------------
-- **Statelessness**: the agent fetches context on every invocation; no
-  stale state accumulates between runs.
-- **Single source of truth**: data is served live from the MCP server, so
-  any update to the underlying JSONL is immediately picked up.
-- **Isolation**: each agent passes its own identity to the MCP server, which
-  returns only the context relevant to that agent.
-- **Token efficiency**: the provider can window or filter messages before
-  returning them, keeping the context window lean.
+- **Statelessness**: the agent fetches conversation history on every
+  invocation; no stale in-process state accumulates between runs.
+- **Single source of truth**: all conversation data lives in Azure Table
+  Storage and is served live from the MCP server.
+- **Isolation**: each orchestration has its own ID, so a single server can
+  serve all 15+ repos in the ASI Saga ecosystem.
+- **Token efficiency**: the provider windows the history via the ``limit``
+  parameter before returning it, keeping the context window lean.
 
 Example::
 
-    from aos_mcp_servers.routing import MCPStreamableHTTPTool, MCPToolDefinition
-    from purpose_driven_agent.context_provider import SubconsciousContextProvider
     from purpose_driven_agent import GenericPurposeDrivenAgent
-
-    mcp_server = MCPStreamableHTTPTool(
-        url="https://subconscious.asisaga.com/mcp",
-        tools=[MCPToolDefinition(name="read_subconscious_jsonl")],
-    )
-    provider = SubconsciousContextProvider(
-        mcp_server=mcp_server,
-        agent_name="CMO",
-        repo="agent-cmo-repo",
-    )
+    from purpose_driven_agent.context_provider import create_subconscious_provider
 
     agent = GenericPurposeDrivenAgent(
         agent_id="cmo",
@@ -49,10 +42,12 @@ Example::
         adapter_name="marketing",
     )
     await agent.initialize()
-    agent.set_context_provider(provider)
+    agent.set_context_provider(
+        create_subconscious_provider(orchestration_id="orch-cmo-2026-q2")
+    )
 
     result = await agent.handle_event({"type": "strategy_review"})
-    # result["injected_context"] contains the subconscious instructions
+    # result["injected_context"] contains the prior conversation as context
 """
 
 from __future__ import annotations
@@ -86,7 +81,7 @@ class ContextProvider(ABC):
     """Abstract base class for agent context providers.
 
     A ContextProvider bridges an external data source (MCP server, database,
-    JSONL repository) into the :class:`~purpose_driven_agent.PurposeDrivenAgent`
+    conversation history) into the :class:`~purpose_driven_agent.PurposeDrivenAgent`
     reasoning context.
 
     Implement :meth:`get_context` to fetch and engineer data into a
@@ -129,67 +124,73 @@ class ContextProvider(ABC):
 
 
 class SubconsciousContextProvider(ContextProvider):
-    """ContextProvider that reads JSONL "subconscious" data from an MCP server.
+    """ContextProvider backed by the ``subconscious.asisaga.com`` MCP server.
 
     Implements the Context Pipeline described in ``pr/context.md``:
 
-    1. Calls ``read_subconscious_jsonl`` (or a configured tool name) on the
-       registered MCP server, passing the agent's identity.
-    2. Normalises the raw output to a string (handles both dict and str results).
-    3. Engineers it into a ``PRIMARY SUBCONSCIOUS CONTEXT`` instruction block.
+    **Reading (context injection)**
+
+    1. Calls ``get_conversation`` (or a configured tool name) on the registered
+       MCP server, passing the orchestration ID and an optional message limit.
+    2. Normalises the raw output to a string (handles both ``dict`` and ``str``
+       results).
+    3. Engineers it into a ``CONVERSATION HISTORY`` instruction block.
     4. Returns a :class:`Context` with the instruction block and the
        passed-through messages.
 
-    The MCP server (e.g. ``subconscious.asisaga.com``) uses ``agent_name`` and
-    ``repo`` arguments to isolate each agent's context, enabling a single
-    server to serve the 15+ repos in the ASI Saga ecosystem.
+    **Writing (message persistence)**
+
+    Exposes :meth:`persist_message` and :meth:`persist_conversation_turn` so
+    that the orchestrating agent can write new messages back to the server
+    after processing an event.
+
+    The MCP server uses the ``orchestration_id`` to isolate each agent's
+    conversation, enabling a single server to serve all 15+ repos in the ASI
+    Saga ecosystem.
 
     Example::
 
-        from aos_mcp_servers.routing import MCPStreamableHTTPTool, MCPToolDefinition
-        from purpose_driven_agent.context_provider import SubconsciousContextProvider
+        from purpose_driven_agent.context_provider import create_subconscious_provider
 
-        mcp_server = MCPStreamableHTTPTool(
-            url="https://subconscious.asisaga.com/mcp",
-            tools=[MCPToolDefinition(name="read_subconscious_jsonl")],
-        )
-        provider = SubconsciousContextProvider(
-            mcp_server=mcp_server,
-            agent_name="CMO",
-            repo="agent-cmo-repo",
-        )
+        provider = create_subconscious_provider(orchestration_id="orch-cmo-2026-q2")
         context = await provider.get_context(messages=[])
-        # context.instructions == "PRIMARY SUBCONSCIOUS CONTEXT:\\n..."
+        # context.instructions == "CONVERSATION HISTORY:\\n..."
+
+        # Persist a new message after the agent responds:
+        await provider.persist_message(
+            agent_id="cmo",
+            role="assistant",
+            content="Marketing strategy reviewed.",
+        )
     """
 
     def __init__(
         self,
         mcp_server: Any,
-        agent_name: str,
-        repo: str,
-        tool_name: str = "read_subconscious_jsonl",
+        orchestration_id: str,
+        tool_name: str = "get_conversation",
+        limit: int = 200,
     ) -> None:
         """Initialise the SubconsciousContextProvider.
 
         Args:
             mcp_server: MCP server instance that exposes the subconscious
-                tool.  Must implement ``async call_tool(tool_name, params)``
+                tools.  Must implement ``async call_tool(tool_name, params)``
                 (satisfies :class:`~purpose_driven_agent.MCPServerProtocol`).
-            agent_name: Identity of the agent whose subconscious data to
-                retrieve (e.g. ``"CMO"``).  Passed to the MCP tool as
-                ``agent_name``.
-            repo: Repository name containing the agent's JSONL data
-                (e.g. ``"agent-cmo-repo"``).  Passed to the MCP tool as
-                ``repo``.
-            tool_name: Name of the MCP tool to invoke.  Defaults to
-                ``"read_subconscious_jsonl"``.
+            orchestration_id: Unique identifier for the orchestration whose
+                conversation history to retrieve and persist.  Passed to the
+                MCP tools as ``orchestration_id``.
+            tool_name: Name of the MCP retrieval tool to invoke.  Defaults to
+                ``"get_conversation"``.
+            limit: Maximum number of messages to retrieve per call.  Defaults
+                to ``200``.
         """
         self.mcp_server = mcp_server
-        self.agent_name = agent_name
-        self.repo = repo
+        self.orchestration_id = orchestration_id
         self.tool_name = tool_name
+        self.limit = limit
         self.logger = logging.getLogger(
-            f"purpose_driven_agent.SubconsciousContextProvider.{agent_name}"
+            f"purpose_driven_agent.SubconsciousContextProvider.{orchestration_id}"
         )
 
     async def get_context(
@@ -197,11 +198,11 @@ class SubconsciousContextProvider(ContextProvider):
         messages: List[Dict[str, Any]],
         **kwargs: Any,
     ) -> Context:
-        """Fetch subconscious JSONL data and engineer it into a Context object.
+        """Fetch conversation history and engineer it into a Context object.
 
-        Calls :attr:`tool_name` on :attr:`mcp_server` with this agent's
-        identity parameters.  The raw output is normalised to a string and
-        formatted as a high-priority ``PRIMARY SUBCONSCIOUS CONTEXT`` block.
+        Calls :attr:`tool_name` on :attr:`mcp_server` with this orchestration's
+        ID and the configured :attr:`limit`.  The raw output is normalised to a
+        string and formatted as a ``CONVERSATION HISTORY`` block.
 
         If the MCP call fails, an empty instruction string is returned so
         the agent can continue operating in a degraded mode rather than
@@ -213,13 +214,13 @@ class SubconsciousContextProvider(ContextProvider):
             **kwargs: Not used; present for interface compatibility.
 
         Returns:
-            :class:`Context` with the engineered subconscious instruction
-            block and the passed-through messages.
+            :class:`Context` with the engineered conversation history
+            instruction block and the passed-through messages.
         """
         try:
             raw_output = await self.mcp_server.call_tool(
                 self.tool_name,
-                {"agent_name": self.agent_name, "repo": self.repo},
+                {"orchestration_id": self.orchestration_id, "limit": self.limit},
             )
             # Normalise to string — MCP tools may return dict, list, or str
             if isinstance(raw_output, (dict, list)):
@@ -227,22 +228,98 @@ class SubconsciousContextProvider(ContextProvider):
             else:
                 raw_content = str(raw_output)
 
-            engineered_context = f"PRIMARY SUBCONSCIOUS CONTEXT:\n{raw_content}"
+            engineered_context = f"CONVERSATION HISTORY:\n{raw_content}"
             self.logger.debug(
-                "SubconsciousContextProvider fetched context for agent '%s' from repo '%s'",
-                self.agent_name,
-                self.repo,
+                "SubconsciousContextProvider fetched context for orchestration '%s'",
+                self.orchestration_id,
             )
         except Exception as exc:  # pylint: disable=broad-exception-caught
             self.logger.error(
-                "Failed to fetch subconscious context for '%s' from '%s': %s",
-                self.agent_name,
-                self.repo,
+                "Failed to fetch subconscious context for orchestration '%s': %s",
+                self.orchestration_id,
                 exc,
             )
             engineered_context = ""
 
         return Context(instructions=engineered_context, messages=messages)
+
+    async def persist_message(
+        self,
+        agent_id: str,
+        role: str,
+        content: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        """Append a single message to this orchestration's conversation.
+
+        Calls the ``persist_message`` tool on :attr:`mcp_server`.  If the
+        call fails, the error is logged and ``None`` is returned so that the
+        agent can continue without interruption.
+
+        Args:
+            agent_id: Identifier of the agent producing the message
+                (e.g. ``"cmo"``).
+            role: Message role — ``"user"``, ``"assistant"``, ``"system"``,
+                or ``"tool"``.
+            content: Full text content of the message.
+            metadata: Optional structured metadata dict (serialised as JSON
+                by the server).
+
+        Returns:
+            Confirmation dict from the server (with ``sequence`` and
+            ``timestamp`` keys), or ``None`` on failure.
+        """
+        try:
+            return await self.mcp_server.call_tool(
+                "persist_message",
+                {
+                    "orchestration_id": self.orchestration_id,
+                    "agent_id": agent_id,
+                    "role": role,
+                    "content": content,
+                    "metadata": metadata,
+                },
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self.logger.error(
+                "Failed to persist message for orchestration '%s': %s",
+                self.orchestration_id,
+                exc,
+            )
+            return None
+
+    async def persist_conversation_turn(
+        self,
+        messages: List[Dict[str, Any]],
+    ) -> Any:
+        """Persist multiple messages for one orchestration turn in a single call.
+
+        Each element in *messages* must contain ``agent_id``, ``role``, and
+        ``content`` keys, with an optional ``metadata`` dict.  Calls the
+        ``persist_conversation_turn`` tool on :attr:`mcp_server`.
+
+        Args:
+            messages: List of message dicts to persist.
+
+        Returns:
+            Summary dict from the server (with ``persisted`` count), or
+            ``None`` on failure.
+        """
+        try:
+            return await self.mcp_server.call_tool(
+                "persist_conversation_turn",
+                {
+                    "orchestration_id": self.orchestration_id,
+                    "messages": messages,
+                },
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self.logger.error(
+                "Failed to persist conversation turn for orchestration '%s': %s",
+                self.orchestration_id,
+                exc,
+            )
+            return None
 
 
 # ---------------------------------------------------------------------------
@@ -254,9 +331,9 @@ SUBCONSCIOUS_MCP_URL: str = "https://subconscious.asisaga.com/mcp"
 
 
 def create_subconscious_provider(
-    agent_name: str,
-    repo: str,
-    tool_name: str = "read_subconscious_jsonl",
+    orchestration_id: str,
+    tool_name: str = "get_conversation",
+    limit: int = 200,
     mcp_url: str = SUBCONSCIOUS_MCP_URL,
 ) -> SubconsciousContextProvider:
     """Create a :class:`SubconsciousContextProvider` wired to the live
@@ -281,19 +358,20 @@ def create_subconscious_provider(
         )
         await agent.initialize()
         agent.set_context_provider(
-            create_subconscious_provider(agent_name="CMO", repo="agent-cmo-repo")
+            create_subconscious_provider(orchestration_id="orch-cmo-2026-q2")
         )
         result = await agent.handle_event({"type": "strategy_review"})
-        # result["injected_context"] == "PRIMARY SUBCONSCIOUS CONTEXT:\\n..."
+        # result["injected_context"] == "CONVERSATION HISTORY:\\n..."
 
     Args:
-        agent_name: Identity of the agent whose subconscious data to fetch
-            (e.g. ``"CMO"``).  Forwarded to the MCP tool as ``agent_name``.
-        repo: Repository name containing the agent's JSONL subconscious data
-            (e.g. ``"agent-cmo-repo"``).  Forwarded to the MCP tool as
-            ``repo``.
-        tool_name: Name of the MCP tool on the server to invoke.  Defaults to
-            ``"read_subconscious_jsonl"``.
+        orchestration_id: Unique identifier for the orchestration whose
+            conversation history to retrieve and persist
+            (e.g. ``"orch-cmo-2026-q2"``).  Forwarded to the MCP tools
+            as ``orchestration_id``.
+        tool_name: Name of the MCP retrieval tool to invoke.  Defaults to
+            ``"get_conversation"``.
+        limit: Maximum number of messages to retrieve per call.  Defaults to
+            ``200``.
         mcp_url: Base URL of the MCP server.  Defaults to
             :data:`SUBCONSCIOUS_MCP_URL` (``https://subconscious.asisaga.com/mcp``).
 
@@ -323,15 +401,14 @@ def create_subconscious_provider(
 
     logger = logging.getLogger("purpose_driven_agent.create_subconscious_provider")
     logger.info(
-        "Created SubconsciousContextProvider for agent '%s' repo '%s' → %s",
-        agent_name,
-        repo,
+        "Created SubconsciousContextProvider for orchestration '%s' → %s",
+        orchestration_id,
         mcp_url,
     )
 
     return SubconsciousContextProvider(
         mcp_server=adapter,
-        agent_name=agent_name,
-        repo=repo,
+        orchestration_id=orchestration_id,
         tool_name=tool_name,
+        limit=limit,
     )

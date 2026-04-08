@@ -1,74 +1,69 @@
-To implement this, you will treat the **subconscious.asisaga.com** MCP server as a remote context source. The **Foundry Agent Service** acts as the host that maintains the connection to the MCP server, while the **Microsoft Agent Framework** uses a ContextProvider to bridge that data into the agent's reasoning loop.
+The **subconscious.asisaga.com** MCP server is the context management backend for all AOS agents.
+It is a multi-agent **conversation persistence** service hosted as an Azure Functions app, exposing a
+[Model Context Protocol](https://modelcontextprotocol.io) streamable-HTTP endpoint at `/mcp`.
+
 ### 1. The Architecture
-You are creating a "Context Pipeline." Foundry connects to the MCP server, and the ContextProvider calls a tool on that server to pull the specific JSONL "subconscious" data.
-### 2. Implementation Code
-This implementation assumes you have registered the MCP server in your Foundry Project and have the azure-ai-projects and azure-ai-ml packages installed.
+
+The "Context Pipeline" has three layers:
+
+1. **MCP server** (`subconscious.asisaga.com/mcp`) — persists orchestration records and conversation
+   history in Azure Table Storage.
+2. **`SubconsciousContextProvider`** — calls `get_conversation` to retrieve prior conversation history
+   and engineers it into a `CONVERSATION HISTORY` instruction block injected into the agent's LLM
+   context.  Also exposes `persist_message` and `persist_conversation_turn` to write new messages
+   back to the server after the agent processes an event.
+3. **`PurposeDrivenAgent`** — receives the injected context via `handle_event` and caches it in its
+   `ContextMCPServer` for cross-restart access.
+
+### 2. MCP Tools (server-side)
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `create_orchestration` | `orchestration_id`, `purpose`, `agents?` | Register a new orchestration |
+| `persist_message` | `orchestration_id`, `agent_id`, `role`, `content`, `metadata?` | Append one message |
+| `persist_conversation_turn` | `orchestration_id`, `messages` | Persist multiple messages at once |
+| `get_conversation` | `orchestration_id`, `limit=200` | Retrieve full conversation history |
+| `list_orchestrations` | `status?` | List all orchestrations |
+| `complete_orchestration` | `orchestration_id`, `summary?` | Mark orchestration as completed |
+
+MCP Resource: `orchestration://{orchestration_id}` — full metadata + history.
+
+### 3. Implementation
+
 ```python
-import json
-from azure.ai.projects import AIProjectClient
-from azure.identity import DefaultAzureCredential
-from azure.ai.projects.models import ContextProvider, Context
+from purpose_driven_agent import GenericPurposeDrivenAgent
+from purpose_driven_agent.context_provider import create_subconscious_provider
 
-# 1. Custom Context Provider for the ASI Saga
-class SubconsciousContextProvider(ContextProvider):
-    def __init__(self, client: AIProjectClient, agent_id: str):
-        self.client = client
-        self.agent_id = agent_id
+# One-call factory wires up the live server via agent_framework.MCPStreamableHTTPTool
+provider = create_subconscious_provider(orchestration_id="orch-cmo-2026-q2")
 
-    async def get_context(self, messages, **kwargs) -> Context:
-        # Call the MCP tool registered in Foundry
-        # This triggers the 'read_jsonl' tool on subconscious.asisaga.com
-        mcp_tool_output = await self.client.agents.execute_tool(
-            agent_id=self.agent_id,
-            tool_name="read_subconscious_jsonl",
-            arguments={"agent_name": "CMO", "repo": "agent-cmo-repo"}
-        )
+agent = GenericPurposeDrivenAgent(
+    agent_id="cmo",
+    purpose="Lead marketing strategy and brand growth",
+    adapter_name="marketing",
+)
+await agent.initialize()
+agent.set_context_provider(provider)
 
-        # Process the raw JSONL strings into a structured prompt block
-        raw_jsonl = mcp_tool_output.content
-        engineered_context = f"PRIMARY SUBCONSCIOUS CONTEXT:\n{raw_jsonl}"
+# handle_event fetches conversation history and injects it as context
+result = await agent.handle_event({"type": "strategy_review"})
+# result["injected_context"] == "CONVERSATION HISTORY:\n..."
 
-        # Inject this as a high-priority system instruction
-        return Context(
-            instructions=engineered_context,
-            # Pass through the messages, perhaps windowing for token efficiency
-            messages=messages
-        )
-
-# 2. Main Orchestration
-async def initialize_agent():
-    project_client = AIProjectClient.from_connection_string(
-        conn_str="YOUR_FOUNDRY_CONNECTION_STRING",
-        credential=DefaultAzureCredential()
-    )
-
-    # Define the Agent and attach the MCP Toolset
-    # The 'subconscious' toolset must be pre-registered in your Foundry Portal
-    agent = project_client.agents.create_agent(
-        model="gpt-4o",
-        name="CMO-Agent",
-        instructions="You are the CMO Agent of the ASI Saga.",
-        tools=[{"type": "mcp", "name": "subconscious-asisaga-mcp"}]
-    )
-
-    # Register the ContextProvider
-    context_provider = SubconsciousContextProvider(project_client, agent.id)
-    
-    # Run the agent with full context management
-    response = await project_client.agents.process_message(
-        agent_id=agent.id,
-        message="Review the product essence from my subconscious.",
-        context_provider=context_provider
-    )
-
-    print(f"Agent Output: {response.text}")
-
+# Persist the agent's response back to the server
+await provider.persist_message(
+    agent_id="cmo",
+    role="assistant",
+    content=result.get("response", ""),
+)
 ```
-### 3. How Foundry Supports the "Subconscious" Protocol
- * **Secure Tunneling:** Foundry handles the authentication between your agent instance and the subconscious.asisaga.com endpoint. You don't need to pass raw secrets through the ContextProvider.
- * **Tool-Augmented Context:** By using the MCP server, the JSONL files aren't just "read"; they are queried. If your MCP server supports filtering, your ContextProvider can request only specific segments (e.g., last_modified > '2026-04-01'), keeping the context engineered and lean.
- * **Isolation:** Since you are managing 15 repos, each agent's ContextProvider can pass its unique identity to the same MCP server, and the server returns the specific JSONL "subconscious" for that agent.
-### 4. Key Advantages of this Approach
- * **Statelessness:** Your agent doesn't store the JSONL; it fetches it via the MCP "subconscious" tool every time the ContextProvider is invoked.
- * **Single Source of Truth:** Changes pushed to the JSONL in your GitHub repo are immediately served by the MCP server and picked up by the next agent run.
- * **Pure Engineering:** You have 100% control over the instructions string in the Context object, allowing you to format the JSON-LD or JSONL exactly how the agent needs it to maintain semantic purity.
+
+### 4. Key Advantages
+
+* **Statelessness:** The agent fetches conversation history on every invocation; no stale in-process
+  state accumulates between restarts.
+* **Single source of truth:** All conversation data lives in Azure Table Storage and is served live
+  from the MCP server.
+* **Isolation:** Each orchestration has its own `orchestration_id`, so a single server serves all
+  15+ repos in the ASI Saga ecosystem.
+* **Token efficiency:** The provider uses the `limit` parameter to window conversation history,
+  keeping the LLM context window lean.
