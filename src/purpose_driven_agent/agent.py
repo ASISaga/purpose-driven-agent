@@ -495,6 +495,136 @@ class PurposeDrivenAgent(_AgentFrameworkBase, ABC):
             "Context provider registered: %s", type(provider).__name__
         )
 
+    async def get_schema_context(
+        self, schema_name: str, context_id: str
+    ) -> Any:
+        """Retrieve a JSON-LD schema context document from the subconscious MCP server.
+
+        Routes the request through the MCP server registered as
+        ``"subconscious"`` (via :meth:`register_mcp_server`).  If no such
+        server is registered, falls back to the current
+        :attr:`context_provider` when it is a
+        :class:`~purpose_driven_agent.context_provider.SubconsciousSchemaContextProvider`
+        whose :attr:`schema_name` and :attr:`context_id` match the requested
+        values.
+
+        This method bypasses the ``enabled`` flag so it can always be used
+        for direct agent context I/O, regardless of whether the server is
+        currently selected for LLM tool exposure.
+
+        Args:
+            schema_name: Mind schema name (e.g. ``"manas"``, ``"buddhi"``).
+            context_id: Unique identifier for the context document
+                (e.g. the agent's ID).
+
+        Returns:
+            Raw schema context document (typically a ``dict`` for a JSON-LD
+            document), or ``None`` on failure.
+
+        Raises:
+            RuntimeError: If neither a ``"subconscious"`` MCP server is
+                registered nor a matching
+                :class:`~purpose_driven_agent.context_provider.SubconsciousSchemaContextProvider`
+                is set.
+        """
+        if "subconscious" in self.mcp_servers:
+            server = self.mcp_servers["subconscious"]["server"]
+            try:
+                return await server.call_tool(
+                    "get_schema_context",
+                    {"schema_name": schema_name, "context_id": context_id},
+                )
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                self.logger.error(
+                    "get_schema_context failed for '%s/%s': %s",
+                    schema_name,
+                    context_id,
+                    exc,
+                )
+                return None
+
+        from purpose_driven_agent.context_provider import SubconsciousSchemaContextProvider
+
+        if (
+            isinstance(self.context_provider, SubconsciousSchemaContextProvider)
+            and self.context_provider.schema_name == schema_name
+            and self.context_provider.context_id == context_id
+        ):
+            return await self.context_provider.get_schema_context()
+
+        raise RuntimeError(
+            "No subconscious MCP server registered. "
+            "Call register_mcp_server('subconscious', <server>) first, "
+            "or set a matching SubconsciousSchemaContextProvider via set_context_provider()."
+        )
+
+    async def store_schema_context(
+        self, schema_name: str, context_id: str, document: Any
+    ) -> Any:
+        """Persist a JSON-LD schema context document to the subconscious MCP server.
+
+        Routes the request through the MCP server registered as
+        ``"subconscious"`` (via :meth:`register_mcp_server`).  If no such
+        server is registered, falls back to the current
+        :attr:`context_provider` when it is a
+        :class:`~purpose_driven_agent.context_provider.SubconsciousSchemaContextProvider`
+        whose :attr:`schema_name` and :attr:`context_id` match the requested
+        values.
+
+        This method bypasses the ``enabled`` flag so it can always be used
+        for direct agent context I/O, regardless of whether the server is
+        currently selected for LLM tool exposure.
+
+        Args:
+            schema_name: Mind schema name (e.g. ``"manas"``, ``"buddhi"``).
+            context_id: Unique identifier for the context document
+                (e.g. the agent's ID).
+            document: JSON-LD document conforming to the mind schema.
+
+        Returns:
+            Confirmation payload from the server, or ``None`` on failure.
+
+        Raises:
+            RuntimeError: If neither a ``"subconscious"`` MCP server is
+                registered nor a matching
+                :class:`~purpose_driven_agent.context_provider.SubconsciousSchemaContextProvider`
+                is set.
+        """
+        if "subconscious" in self.mcp_servers:
+            server = self.mcp_servers["subconscious"]["server"]
+            try:
+                return await server.call_tool(
+                    "store_schema_context",
+                    {
+                        "schema_name": schema_name,
+                        "context_id": context_id,
+                        "document": document,
+                    },
+                )
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                self.logger.error(
+                    "store_schema_context failed for '%s/%s': %s",
+                    schema_name,
+                    context_id,
+                    exc,
+                )
+                return None
+
+        from purpose_driven_agent.context_provider import SubconsciousSchemaContextProvider
+
+        if (
+            isinstance(self.context_provider, SubconsciousSchemaContextProvider)
+            and self.context_provider.schema_name == schema_name
+            and self.context_provider.context_id == context_id
+        ):
+            return await self.context_provider.store_schema_context(document)
+
+        raise RuntimeError(
+            "No subconscious MCP server registered. "
+            "Call register_mcp_server('subconscious', <server>) first, "
+            "or set a matching SubconsciousSchemaContextProvider via set_context_provider()."
+        )
+
     # ------------------------------------------------------------------
     # AOS persona helpers
     # ------------------------------------------------------------------

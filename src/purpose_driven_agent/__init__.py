@@ -10,7 +10,10 @@ Exports:
     NoOpMLService: No-operation ML service (raises NotImplementedError on use).
     Context: Structured context object for LLM reasoning injection.
     ContextProvider: Abstract base class for agent context providers.
-    SubconsciousContextProvider: ContextProvider that reads JSONL data from an MCP server.
+    SubconsciousContextProvider: ContextProvider backed by conversation history from the subconscious MCP server.
+    SubconsciousSchemaContextProvider: ContextProvider backed by JSON-LD mind-schema documents from the subconscious MCP server.
+    create_subconscious_provider: Factory for SubconsciousContextProvider wired to the live server.
+    create_subconscious_schema_provider: Factory for SubconsciousSchemaContextProvider wired to the live server.
 
 MCP transport types and configuration models are available through the AOS
 Client SDK (``aos_client.mcp``)::
@@ -35,7 +38,9 @@ from purpose_driven_agent.context_provider import (
     Context,
     ContextProvider,
     SubconsciousContextProvider,
+    SubconsciousSchemaContextProvider,
     create_subconscious_provider,
+    create_subconscious_schema_provider,
 )
 from purpose_driven_agent.context_server import ContextMCPServer
 from purpose_driven_agent.ml_interface import IMLService, NoOpMLService
@@ -51,7 +56,9 @@ __all__ = [
     "Context",
     "ContextProvider",
     "SubconsciousContextProvider",
+    "SubconsciousSchemaContextProvider",
     "create_subconscious_provider",
+    "create_subconscious_schema_provider",
     "SUBCONSCIOUS_MCP_URL",
 ]
 

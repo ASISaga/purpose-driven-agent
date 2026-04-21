@@ -3,35 +3,54 @@ context_provider — Bridge for injecting remote MCP context into agent reasonin
 
 This module implements the Context Pipeline described in ``pr/context.md``.
 It integrates with the ``subconscious.asisaga.com`` MCP server — a multi-agent
-**conversation persistence** service — to inject prior conversation history
-into the :class:`~purpose_driven_agent.PurposeDrivenAgent` reasoning loop,
-and to persist new messages produced by the agent.
+**conversation and schema context persistence** service — to inject prior
+conversation history and mind-schema documents into the
+:class:`~purpose_driven_agent.PurposeDrivenAgent` reasoning loop, and to
+persist new messages and schema contexts produced by the agent.
 
 Architecture
 ------------
 The pipeline has three layers:
 
 1. **MCP server** (``subconscious.asisaga.com/mcp``) — hosts orchestration
-   records and conversation history in Azure Table Storage.
-2. **SubconsciousContextProvider** — calls ``get_conversation`` to retrieve
-   history for a given orchestration and engineers it into a structured
-   :class:`Context` object.  Also exposes ``persist_message`` and
-   ``persist_conversation_turn`` to write new messages back to the server.
+   records, conversation history, and JSON-LD mind-schema documents
+   (Manas, Buddhi, Ahankara, Chitta, entity perspectives) in Azure Table
+   Storage.
+2. **Context providers** — bridge the MCP server to the agent:
+
+   - :class:`SubconsciousContextProvider` — retrieves conversation history
+     via ``get_conversation`` and engineers it into a ``CONVERSATION HISTORY``
+     instruction block.  Exposes :meth:`~SubconsciousContextProvider.persist_message`
+     and :meth:`~SubconsciousContextProvider.persist_conversation_turn` for
+     writing new messages back to the server.
+   - :class:`SubconsciousSchemaContextProvider` — retrieves a JSON-LD
+     mind-schema document (e.g. Manas, Buddhi) via ``get_schema_context``
+     and engineers it into a ``SCHEMA CONTEXT`` instruction block.  Exposes
+     :meth:`~SubconsciousSchemaContextProvider.store_schema_context` for
+     persisting updated schema documents back to the server, and
+     :meth:`~SubconsciousSchemaContextProvider.list_schema_contexts` for
+     enumerating available contexts.
+
 3. **PurposeDrivenAgent** — injects the ``Context.instructions`` into its
    reasoning loop and caches them via :class:`~purpose_driven_agent.ContextMCPServer`.
+   Convenience methods :meth:`~purpose_driven_agent.PurposeDrivenAgent.get_schema_context`
+   and :meth:`~purpose_driven_agent.PurposeDrivenAgent.store_schema_context`
+   allow direct schema context I/O when the ``"subconscious"`` MCP server is
+   registered.
 
 Key advantages
 --------------
-- **Statelessness**: the agent fetches conversation history on every
-  invocation; no stale in-process state accumulates between runs.
-- **Single source of truth**: all conversation data lives in Azure Table
-  Storage and is served live from the MCP server.
-- **Isolation**: each orchestration has its own ID, so a single server can
-  serve all 15+ repos in the ASI Saga ecosystem.
-- **Token efficiency**: the provider windows the history via the ``limit``
-  parameter before returning it, keeping the context window lean.
+- **Statelessness**: the agent fetches conversation history and schema
+  contexts on every invocation; no stale in-process state accumulates
+  between runs.
+- **Single source of truth**: all data lives in Azure Table Storage and is
+  served live from the MCP server.
+- **Isolation**: each orchestration and schema context is keyed by ID, so a
+  single server can serve all 15+ repos in the ASI Saga ecosystem.
+- **Token efficiency**: the providers window their data before returning it,
+  keeping the context window lean.
 
-Example::
+Example — conversation history::
 
     from purpose_driven_agent import GenericPurposeDrivenAgent
     from purpose_driven_agent.context_provider import create_subconscious_provider
@@ -48,6 +67,21 @@ Example::
 
     result = await agent.handle_event({"type": "strategy_review"})
     # result["injected_context"] contains the prior conversation as context
+
+Example — schema context (Manas / agent mind state)::
+
+    from purpose_driven_agent.context_provider import create_subconscious_schema_provider
+
+    agent.set_context_provider(
+        create_subconscious_schema_provider(schema_name="manas", context_id="cmo")
+    )
+
+    result = await agent.handle_event({"type": "strategy_review"})
+    # result["injected_context"] contains the agent's Manas document
+
+    # After processing, persist the updated mind state back to the server:
+    schema_provider = agent.context_provider
+    await schema_provider.store_schema_context(updated_manas_document)
 """
 
 from __future__ import annotations
@@ -322,6 +356,210 @@ class SubconsciousContextProvider(ContextProvider):
             return None
 
 
+class SubconsciousSchemaContextProvider(ContextProvider):
+    """ContextProvider backed by the ``subconscious.asisaga.com`` schema context store.
+
+    Manages **JSON-LD mind-schema documents** (Manas, Buddhi, Ahankara, Chitta,
+    and entity perspectives) stored in the subconscious MCP server.
+
+    **Reading (context injection)**
+
+    :meth:`get_context` calls ``get_schema_context`` on the registered MCP
+    server, passing ``schema_name`` and ``context_id``.  The raw output is
+    normalised to a string and engineered into a ``SCHEMA CONTEXT``
+    instruction block injected into the agent's LLM reasoning loop.
+
+    **Writing (schema context persistence)**
+
+    :meth:`store_schema_context` calls ``store_schema_context`` on the MCP
+    server to persist an updated JSON-LD mind document back to Azure Table
+    Storage.  :meth:`list_schema_contexts` calls ``list_schema_contexts`` to
+    enumerate available contexts for this schema.
+
+    Example::
+
+        from purpose_driven_agent.context_provider import (
+            create_subconscious_schema_provider,
+        )
+
+        provider = create_subconscious_schema_provider(
+            schema_name="manas",
+            context_id="cmo",
+        )
+
+        # Inject Manas document into the agent's reasoning loop:
+        context = await provider.get_context(messages=[])
+        # context.instructions == "SCHEMA CONTEXT (manas):\\n..."
+
+        # Persist an updated Manas document after the agent processes an event:
+        await provider.store_schema_context(updated_manas_document)
+    """
+
+    def __init__(
+        self,
+        mcp_server: Any,
+        schema_name: str,
+        context_id: str,
+    ) -> None:
+        """Initialise the SubconsciousSchemaContextProvider.
+
+        Args:
+            mcp_server: MCP server instance that exposes the subconscious
+                schema context tools.  Must implement
+                ``async call_tool(tool_name, params)``
+                (satisfies :class:`~purpose_driven_agent.MCPServerProtocol`).
+            schema_name: Name of the mind schema to work with.  Must be one
+                of ``"manas"``, ``"buddhi"``, ``"ahankara"``, ``"chitta"``,
+                ``"action-plan"``, ``"entity-context"``, or
+                ``"entity-content"``.
+            context_id: Unique identifier for the schema context document to
+                retrieve and persist.  Typically the agent's ID
+                (e.g. ``"cmo"``).
+        """
+        self.mcp_server = mcp_server
+        self.schema_name = schema_name
+        self.context_id = context_id
+        self.logger = logging.getLogger(
+            f"purpose_driven_agent.SubconsciousSchemaContextProvider"
+            f".{schema_name}.{context_id}"
+        )
+
+    async def get_context(
+        self,
+        messages: List[Dict[str, Any]],
+        **kwargs: Any,
+    ) -> Context:
+        """Fetch the schema context document and engineer it into a Context object.
+
+        Calls ``get_schema_context`` on :attr:`mcp_server` with
+        :attr:`schema_name` and :attr:`context_id`.  The raw output is
+        normalised to a string and formatted as a ``SCHEMA CONTEXT`` block.
+
+        If the MCP call fails, an empty instruction string is returned so
+        the agent can continue operating in a degraded mode rather than
+        raising an exception.
+
+        Args:
+            messages: Conversation messages passed through to the returned
+                :class:`Context` unchanged.
+            **kwargs: Not used; present for interface compatibility.
+
+        Returns:
+            :class:`Context` with the engineered schema context instruction
+            block and the passed-through messages.
+        """
+        try:
+            raw_output = await self.mcp_server.call_tool(
+                "get_schema_context",
+                {"schema_name": self.schema_name, "context_id": self.context_id},
+            )
+            # Normalise to string — MCP tools may return dict, list, or str
+            if isinstance(raw_output, (dict, list)):
+                raw_content = json.dumps(raw_output)
+            else:
+                raw_content = str(raw_output)
+
+            engineered_context = f"SCHEMA CONTEXT ({self.schema_name}):\n{raw_content}"
+            self.logger.debug(
+                "SubconsciousSchemaContextProvider fetched '%s' context for id '%s'",
+                self.schema_name,
+                self.context_id,
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self.logger.error(
+                "Failed to fetch schema context '%s/%s': %s",
+                self.schema_name,
+                self.context_id,
+                exc,
+            )
+            engineered_context = ""
+
+        return Context(instructions=engineered_context, messages=messages)
+
+    async def get_schema_context(self) -> Any:
+        """Retrieve the raw schema context document from the MCP server.
+
+        Calls ``get_schema_context`` on :attr:`mcp_server` with
+        :attr:`schema_name` and :attr:`context_id` and returns the raw
+        output without any formatting.
+
+        Returns:
+            Raw schema context document returned by the MCP server (typically
+            a ``dict`` for a JSON-LD document), or ``None`` on failure.
+        """
+        try:
+            return await self.mcp_server.call_tool(
+                "get_schema_context",
+                {"schema_name": self.schema_name, "context_id": self.context_id},
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self.logger.error(
+                "Failed to get schema context '%s/%s': %s",
+                self.schema_name,
+                self.context_id,
+                exc,
+            )
+            return None
+
+    async def store_schema_context(self, document: Any) -> Any:
+        """Persist a JSON-LD schema context document to the MCP server.
+
+        Calls ``store_schema_context`` on :attr:`mcp_server` with
+        :attr:`schema_name`, :attr:`context_id`, and the provided *document*.
+        If the call fails, the error is logged and ``None`` is returned so
+        that the agent can continue without interruption.
+
+        Args:
+            document: JSON-LD document conforming to the schema identified
+                by :attr:`schema_name`.  Typically a ``dict`` following the
+                mind-schema structure (e.g. Manas, Buddhi).
+
+        Returns:
+            Confirmation payload from the server, or ``None`` on failure.
+        """
+        try:
+            return await self.mcp_server.call_tool(
+                "store_schema_context",
+                {
+                    "schema_name": self.schema_name,
+                    "context_id": self.context_id,
+                    "document": document,
+                },
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self.logger.error(
+                "Failed to store schema context '%s/%s': %s",
+                self.schema_name,
+                self.context_id,
+                exc,
+            )
+            return None
+
+    async def list_schema_contexts(self) -> Any:
+        """List stored schema contexts for this schema from the MCP server.
+
+        Calls ``list_schema_contexts`` on :attr:`mcp_server`, filtered by
+        :attr:`schema_name`.  If the call fails, the error is logged and
+        ``None`` is returned.
+
+        Returns:
+            List of available schema context descriptors from the server,
+            or ``None`` on failure.
+        """
+        try:
+            return await self.mcp_server.call_tool(
+                "list_schema_contexts",
+                {"schema_name": self.schema_name},
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self.logger.error(
+                "Failed to list schema contexts for '%s': %s",
+                self.schema_name,
+                exc,
+            )
+            return None
+
+
 # ---------------------------------------------------------------------------
 # Live server factory
 # ---------------------------------------------------------------------------
@@ -411,4 +649,96 @@ def create_subconscious_provider(
         orchestration_id=orchestration_id,
         tool_name=tool_name,
         limit=limit,
+    )
+
+
+def create_subconscious_schema_provider(
+    schema_name: str,
+    context_id: str,
+    mcp_url: str = SUBCONSCIOUS_MCP_URL,
+) -> "SubconsciousSchemaContextProvider":
+    """Create a :class:`SubconsciousSchemaContextProvider` wired to the live
+    ``subconscious.asisaga.com`` MCP server.
+
+    Uses ``agent_framework.MCPStreamableHTTPTool`` (the real Microsoft Agent
+    Framework HTTP transport) wrapped in an
+    :class:`~aos_mcp_servers.routing.AgentFrameworkMCPServerAdapter` that
+    adapts its ``**kwargs`` calling convention to the
+    :class:`~purpose_driven_agent.MCPServerProtocol` interface expected by
+    :class:`SubconsciousSchemaContextProvider`.
+
+    The returned provider reads and writes JSON-LD mind-schema documents
+    (Manas, Buddhi, Ahankara, Chitta, and entity perspectives) stored in
+    Azure Table Storage on the subconscious MCP server.
+
+    Example::
+
+        from purpose_driven_agent import GenericPurposeDrivenAgent
+        from purpose_driven_agent.context_provider import (
+            create_subconscious_schema_provider,
+        )
+
+        agent = GenericPurposeDrivenAgent(
+            agent_id="cmo",
+            purpose="Lead marketing strategy and brand growth",
+            adapter_name="marketing",
+        )
+        await agent.initialize()
+        agent.set_context_provider(
+            create_subconscious_schema_provider(schema_name="manas", context_id="cmo")
+        )
+
+        # handle_event fetches the Manas document and injects it as context
+        result = await agent.handle_event({"type": "strategy_review"})
+        # result["injected_context"] == "SCHEMA CONTEXT (manas):\\n..."
+
+        # Persist the updated Manas document after processing:
+        schema_provider = agent.context_provider
+        await schema_provider.store_schema_context(updated_manas_document)
+
+    Args:
+        schema_name: Name of the mind schema to work with.  Must be one of
+            ``"manas"``, ``"buddhi"``, ``"ahankara"``, ``"chitta"``,
+            ``"action-plan"``, ``"entity-context"``, or ``"entity-content"``.
+        context_id: Unique identifier for the schema context document
+            (e.g. the agent's ID ``"cmo"``).
+        mcp_url: Base URL of the MCP server.  Defaults to
+            :data:`SUBCONSCIOUS_MCP_URL` (``https://subconscious.asisaga.com/mcp``).
+
+    Returns:
+        A :class:`SubconsciousSchemaContextProvider` that connects to the live
+        ``subconscious.asisaga.com`` server on first use.
+
+    Raises:
+        ImportError: If ``agent_framework`` is not installed.  Install it with
+            ``pip install agent-framework`` or ``pip install purpose-driven-agent[azure]``.
+    """
+    try:
+        from agent_framework import MCPStreamableHTTPTool  # type: ignore[import-untyped]
+    except ImportError as exc:  # pragma: no cover
+        raise ImportError(
+            "agent-framework is required for create_subconscious_schema_provider(). "
+            "Install it with: pip install agent-framework"
+        ) from exc
+
+    from aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
+
+    real_tool = MCPStreamableHTTPTool(
+        name="subconscious",
+        url=mcp_url,
+    )
+    adapter: Optional[AgentFrameworkMCPServerAdapter] = AgentFrameworkMCPServerAdapter(real_tool)
+
+    logger = logging.getLogger("purpose_driven_agent.create_subconscious_schema_provider")
+    logger.info(
+        "Created SubconsciousSchemaContextProvider for schema '%s' context '%s' → %s",
+        schema_name,
+        context_id,
+        mcp_url,
+    )
+
+    return SubconsciousSchemaContextProvider(
+        mcp_server=adapter,
+        schema_name=schema_name,
+        context_id=context_id,
     )

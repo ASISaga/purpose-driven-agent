@@ -1,6 +1,6 @@
 """
-Tests for context_provider module (Context, ContextProvider, SubconsciousContextProvider)
-and ContextProvider integration with PurposeDrivenAgent.
+Tests for context_provider module (Context, ContextProvider, SubconsciousContextProvider,
+SubconsciousSchemaContextProvider) and ContextProvider integration with PurposeDrivenAgent.
 
 Coverage targets
 ----------------
@@ -20,6 +20,27 @@ Coverage targets
 - AgentFrameworkMCPServerAdapter adapts **kwargs tool to params-dict interface.
 - create_subconscious_provider factory returns a configured SubconsciousContextProvider.
 - SUBCONSCIOUS_MCP_URL constant is exported from the top-level package.
+- SubconsciousSchemaContextProvider stores schema_name and context_id.
+- SubconsciousSchemaContextProvider.get_context calls get_schema_context tool.
+- SubconsciousSchemaContextProvider.get_context formats a SCHEMA CONTEXT instruction block.
+- SubconsciousSchemaContextProvider.get_context handles MCP failures gracefully.
+- SubconsciousSchemaContextProvider.get_context normalises dict/list/str outputs.
+- SubconsciousSchemaContextProvider.get_schema_context returns raw document.
+- SubconsciousSchemaContextProvider.get_schema_context returns None on failure.
+- SubconsciousSchemaContextProvider.store_schema_context calls store_schema_context tool.
+- SubconsciousSchemaContextProvider.store_schema_context returns None on failure.
+- SubconsciousSchemaContextProvider.list_schema_contexts calls list_schema_contexts tool.
+- SubconsciousSchemaContextProvider.list_schema_contexts returns None on failure.
+- create_subconscious_schema_provider factory returns a configured SubconsciousSchemaContextProvider.
+- SubconsciousSchemaContextProvider exported from top-level package.
+- Agent.get_schema_context routes via registered "subconscious" MCP server.
+- Agent.get_schema_context falls back to context_provider when it is a matching SubconsciousSchemaContextProvider.
+- Agent.get_schema_context raises RuntimeError when no server or provider available.
+- Agent.get_schema_context returns None on MCP server error.
+- Agent.store_schema_context routes via registered "subconscious" MCP server.
+- Agent.store_schema_context falls back to context_provider when it is a matching SubconsciousSchemaContextProvider.
+- Agent.store_schema_context raises RuntimeError when no server or provider available.
+- Agent.store_schema_context returns None on MCP server error.
 """
 
 import pytest
@@ -32,7 +53,9 @@ from purpose_driven_agent import (
     ContextProvider,
     GenericPurposeDrivenAgent,
     SubconsciousContextProvider,
+    SubconsciousSchemaContextProvider,
     create_subconscious_provider,
+    create_subconscious_schema_provider,
 )
 from purpose_driven_agent.context_provider import (
     SUBCONSCIOUS_MCP_URL as _SUBCONSCIOUS_MCP_URL_DIRECT,
@@ -596,3 +619,419 @@ class TestCreateSubconsciousProvider:
         adapter = provider.mcp_server
         assert isinstance(adapter._tool, MCPStreamableHTTPTool)
         assert adapter._tool.url == SUBCONSCIOUS_MCP_URL
+
+
+# ---------------------------------------------------------------------------
+# SubconsciousSchemaContextProvider
+# ---------------------------------------------------------------------------
+
+
+class TestSubconsciousSchemaContextProvider:
+    def test_attributes_stored(self) -> None:
+        server = StubMCPServer()
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=server,
+            schema_name="manas",
+            context_id="cmo",
+        )
+        assert provider.schema_name == "manas"
+        assert provider.context_id == "cmo"
+        assert provider.mcp_server is server
+
+    @pytest.mark.asyncio
+    async def test_get_context_calls_get_schema_context_tool(self) -> None:
+        server = StubMCPServer({"@type": "ManasDocument"})
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=server, schema_name="manas", context_id="cmo"
+        )
+        await provider.get_context(messages=[])
+        assert len(server.calls) == 1
+        assert server.calls[0]["tool"] == "get_schema_context"
+
+    @pytest.mark.asyncio
+    async def test_get_context_passes_schema_name_and_context_id(self) -> None:
+        server = StubMCPServer("schema data")
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=server, schema_name="buddhi", context_id="cfo"
+        )
+        await provider.get_context(messages=[])
+        params = server.calls[0]["params"]
+        assert params["schema_name"] == "buddhi"
+        assert params["context_id"] == "cfo"
+
+    @pytest.mark.asyncio
+    async def test_instructions_contain_schema_context_header(self) -> None:
+        server = StubMCPServer("mind document data")
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=server, schema_name="manas", context_id="cmo"
+        )
+        ctx = await provider.get_context(messages=[])
+        assert ctx.instructions.startswith("SCHEMA CONTEXT (manas):\n")
+
+    @pytest.mark.asyncio
+    async def test_instructions_contain_raw_output(self) -> None:
+        server = StubMCPServer("my manas document")
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=server, schema_name="manas", context_id="cmo"
+        )
+        ctx = await provider.get_context(messages=[])
+        assert "my manas document" in ctx.instructions
+
+    @pytest.mark.asyncio
+    async def test_instructions_header_uses_schema_name(self) -> None:
+        server = StubMCPServer("chitta data")
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=server, schema_name="chitta", context_id="cmo"
+        )
+        ctx = await provider.get_context(messages=[])
+        assert ctx.instructions.startswith("SCHEMA CONTEXT (chitta):\n")
+
+    @pytest.mark.asyncio
+    async def test_messages_passed_through(self) -> None:
+        server = StubMCPServer("data")
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=server, schema_name="manas", context_id="cmo"
+        )
+        msgs = [{"type": "strategy_review"}]
+        ctx = await provider.get_context(messages=msgs)
+        assert ctx.messages == msgs
+
+    @pytest.mark.asyncio
+    async def test_dict_output_normalised_to_json_string(self) -> None:
+        server = StubMCPServer({"@type": "Manas", "content": {"current_focus": "growth"}})
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=server, schema_name="manas", context_id="cmo"
+        )
+        ctx = await provider.get_context(messages=[])
+        assert "current_focus" in ctx.instructions
+
+    @pytest.mark.asyncio
+    async def test_list_output_normalised_to_json_string(self) -> None:
+        server = StubMCPServer(["context1", "context2"])
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=server, schema_name="manas", context_id="cmo"
+        )
+        ctx = await provider.get_context(messages=[])
+        assert "context1" in ctx.instructions
+        assert "context2" in ctx.instructions
+
+    @pytest.mark.asyncio
+    async def test_failing_mcp_returns_empty_instructions(self) -> None:
+        server = FailingMCPServer()
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=server, schema_name="manas", context_id="cmo"
+        )
+        ctx = await provider.get_context(messages=[])
+        assert ctx.instructions == ""
+
+    @pytest.mark.asyncio
+    async def test_failing_mcp_still_passes_messages(self) -> None:
+        server = FailingMCPServer()
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=server, schema_name="manas", context_id="cmo"
+        )
+        msgs = [{"type": "fallback"}]
+        ctx = await provider.get_context(messages=msgs)
+        assert ctx.messages == msgs
+
+    @pytest.mark.asyncio
+    async def test_get_schema_context_calls_tool(self) -> None:
+        doc = {"@type": "Manas", "schema_version": "2.0.0"}
+        server = StubMCPServer(doc)
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=server, schema_name="manas", context_id="cmo"
+        )
+        result = await provider.get_schema_context()
+        assert result == doc
+        assert server.calls[0]["tool"] == "get_schema_context"
+        assert server.calls[0]["params"] == {"schema_name": "manas", "context_id": "cmo"}
+
+    @pytest.mark.asyncio
+    async def test_get_schema_context_returns_none_on_failure(self) -> None:
+        server = FailingMCPServer()
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=server, schema_name="manas", context_id="cmo"
+        )
+        result = await provider.get_schema_context()
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_store_schema_context_calls_tool(self) -> None:
+        server = StubMCPServer({"stored": True})
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=server, schema_name="manas", context_id="cmo"
+        )
+        doc = {"@type": "Manas", "content": {"current_focus": "innovation"}}
+        result = await provider.store_schema_context(doc)
+        assert result == {"stored": True}
+        assert len(server.calls) == 1
+        call = server.calls[0]
+        assert call["tool"] == "store_schema_context"
+        assert call["params"]["schema_name"] == "manas"
+        assert call["params"]["context_id"] == "cmo"
+        assert call["params"]["document"] == doc
+
+    @pytest.mark.asyncio
+    async def test_store_schema_context_returns_none_on_failure(self) -> None:
+        server = FailingMCPServer()
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=server, schema_name="manas", context_id="cmo"
+        )
+        result = await provider.store_schema_context({"@type": "Manas"})
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_list_schema_contexts_calls_tool(self) -> None:
+        contexts_list = [{"context_id": "cmo"}, {"context_id": "cfo"}]
+        server = StubMCPServer(contexts_list)
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=server, schema_name="manas", context_id="cmo"
+        )
+        result = await provider.list_schema_contexts()
+        assert result == contexts_list
+        assert len(server.calls) == 1
+        assert server.calls[0]["tool"] == "list_schema_contexts"
+        assert server.calls[0]["params"] == {"schema_name": "manas"}
+
+    @pytest.mark.asyncio
+    async def test_list_schema_contexts_returns_none_on_failure(self) -> None:
+        server = FailingMCPServer()
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=server, schema_name="manas", context_id="cmo"
+        )
+        result = await provider.list_schema_contexts()
+        assert result is None
+
+    def test_importable_from_top_level(self) -> None:
+        from purpose_driven_agent import SubconsciousSchemaContextProvider as TopLevel
+
+        assert TopLevel is SubconsciousSchemaContextProvider
+
+
+# ---------------------------------------------------------------------------
+# create_subconscious_schema_provider factory
+# ---------------------------------------------------------------------------
+
+
+class TestCreateSubconsciousSchemaProvider:
+    def test_create_returns_schema_provider(self) -> None:
+        provider = create_subconscious_schema_provider(
+            schema_name="manas", context_id="cmo"
+        )
+        assert isinstance(provider, SubconsciousSchemaContextProvider)
+
+    def test_create_sets_schema_name(self) -> None:
+        provider = create_subconscious_schema_provider(
+            schema_name="buddhi", context_id="cfo"
+        )
+        assert provider.schema_name == "buddhi"
+
+    def test_create_sets_context_id(self) -> None:
+        provider = create_subconscious_schema_provider(
+            schema_name="manas", context_id="cto"
+        )
+        assert provider.context_id == "cto"
+
+    def test_create_mcp_server_is_adapter(self) -> None:
+        from aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
+
+        provider = create_subconscious_schema_provider(
+            schema_name="manas", context_id="cmo"
+        )
+        assert isinstance(provider.mcp_server, AgentFrameworkMCPServerAdapter)
+
+    def test_create_adapter_wraps_real_tool_with_correct_url(self) -> None:
+        from agent_framework import MCPStreamableHTTPTool
+
+        provider = create_subconscious_schema_provider(
+            schema_name="manas", context_id="cmo"
+        )
+        adapter = provider.mcp_server
+        assert isinstance(adapter._tool, MCPStreamableHTTPTool)
+        assert adapter._tool.url == SUBCONSCIOUS_MCP_URL
+
+    def test_create_custom_mcp_url(self) -> None:
+        from aos_mcp_servers.routing import AgentFrameworkMCPServerAdapter
+
+        provider = create_subconscious_schema_provider(
+            schema_name="manas",
+            context_id="cmo",
+            mcp_url="https://staging.asisaga.com/mcp",
+        )
+        adapter = provider.mcp_server
+        assert isinstance(adapter, AgentFrameworkMCPServerAdapter)
+        assert adapter._tool.url == "https://staging.asisaga.com/mcp"
+
+    def test_create_schema_provider_exported_from_top_level(self) -> None:
+        from purpose_driven_agent import create_subconscious_schema_provider as top_level
+
+        assert top_level is create_subconscious_schema_provider
+
+
+# ---------------------------------------------------------------------------
+# PurposeDrivenAgent.get_schema_context and store_schema_context
+# ---------------------------------------------------------------------------
+
+
+class TestAgentSchemaContextMethods:
+    @pytest.fixture
+    async def agent(self) -> GenericPurposeDrivenAgent:
+        a = GenericPurposeDrivenAgent(
+            agent_id="schema-agent",
+            purpose="Test schema context I/O",
+            adapter_name="test",
+        )
+        await a.initialize()
+        return a
+
+    # --- get_schema_context via registered "subconscious" server ---
+
+    @pytest.mark.asyncio
+    async def test_get_schema_context_via_registered_server(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        doc = {"@type": "Manas", "schema_version": "2.0.0"}
+        server = StubMCPServer(doc)
+        agent.register_mcp_server("subconscious", server)
+        result = await agent.get_schema_context("manas", "cmo")
+        assert result == doc
+        assert server.calls[0]["tool"] == "get_schema_context"
+        assert server.calls[0]["params"] == {"schema_name": "manas", "context_id": "cmo"}
+
+    @pytest.mark.asyncio
+    async def test_get_schema_context_server_failure_returns_none(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        agent.register_mcp_server("subconscious", FailingMCPServer())
+        result = await agent.get_schema_context("manas", "cmo")
+        assert result is None
+
+    # --- get_schema_context via matching context_provider fallback ---
+
+    @pytest.mark.asyncio
+    async def test_get_schema_context_via_matching_provider(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        doc = {"@type": "Buddhi"}
+        server = StubMCPServer(doc)
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=server, schema_name="buddhi", context_id="cfo"
+        )
+        agent.set_context_provider(provider)
+        result = await agent.get_schema_context("buddhi", "cfo")
+        assert result == doc
+
+    @pytest.mark.asyncio
+    async def test_get_schema_context_provider_mismatch_raises(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        server = StubMCPServer("data")
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=server, schema_name="manas", context_id="cmo"
+        )
+        agent.set_context_provider(provider)
+        with pytest.raises(RuntimeError, match="subconscious MCP server"):
+            await agent.get_schema_context("buddhi", "cfo")
+
+    @pytest.mark.asyncio
+    async def test_get_schema_context_no_server_or_provider_raises(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        with pytest.raises(RuntimeError, match="subconscious MCP server"):
+            await agent.get_schema_context("manas", "cmo")
+
+    # --- store_schema_context via registered "subconscious" server ---
+
+    @pytest.mark.asyncio
+    async def test_store_schema_context_via_registered_server(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        server = StubMCPServer({"stored": True})
+        agent.register_mcp_server("subconscious", server)
+        doc = {"@type": "Manas", "content": {"current_focus": "growth"}}
+        result = await agent.store_schema_context("manas", "cmo", doc)
+        assert result == {"stored": True}
+        call = server.calls[0]
+        assert call["tool"] == "store_schema_context"
+        assert call["params"]["schema_name"] == "manas"
+        assert call["params"]["context_id"] == "cmo"
+        assert call["params"]["document"] == doc
+
+    @pytest.mark.asyncio
+    async def test_store_schema_context_server_failure_returns_none(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        agent.register_mcp_server("subconscious", FailingMCPServer())
+        result = await agent.store_schema_context("manas", "cmo", {"@type": "Manas"})
+        assert result is None
+
+    # --- store_schema_context via matching context_provider fallback ---
+
+    @pytest.mark.asyncio
+    async def test_store_schema_context_via_matching_provider(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        server = StubMCPServer({"stored": True})
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=server, schema_name="manas", context_id="cmo"
+        )
+        agent.set_context_provider(provider)
+        doc = {"@type": "Manas"}
+        result = await agent.store_schema_context("manas", "cmo", doc)
+        assert result == {"stored": True}
+
+    @pytest.mark.asyncio
+    async def test_store_schema_context_provider_mismatch_raises(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        server = StubMCPServer("data")
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=server, schema_name="manas", context_id="cmo"
+        )
+        agent.set_context_provider(provider)
+        with pytest.raises(RuntimeError, match="subconscious MCP server"):
+            await agent.store_schema_context("buddhi", "cfo", {"@type": "Buddhi"})
+
+    @pytest.mark.asyncio
+    async def test_store_schema_context_no_server_or_provider_raises(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        with pytest.raises(RuntimeError, match="subconscious MCP server"):
+            await agent.store_schema_context("manas", "cmo", {"@type": "Manas"})
+
+    # --- registered server takes priority over provider ---
+
+    @pytest.mark.asyncio
+    async def test_registered_server_takes_priority_over_provider(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        server_doc = {"source": "registered_server"}
+        registered_server = StubMCPServer(server_doc)
+        provider_server = StubMCPServer({"source": "provider"})
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=provider_server, schema_name="manas", context_id="cmo"
+        )
+        agent.register_mcp_server("subconscious", registered_server)
+        agent.set_context_provider(provider)
+        result = await agent.get_schema_context("manas", "cmo")
+        assert result == server_doc
+        assert len(registered_server.calls) == 1
+        assert len(provider_server.calls) == 0
+
+    # --- schema provider integrates with handle_event ---
+
+    @pytest.mark.asyncio
+    async def test_handle_event_with_schema_provider(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        manas_doc = {"@type": "Manas", "content": {"current_focus": "strategy"}}
+        server = StubMCPServer(manas_doc)
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=server, schema_name="manas", context_id="schema-agent"
+        )
+        agent.set_context_provider(provider)
+        result = await agent.handle_event({"type": "strategy_review"})
+        assert result["status"] == "success"
+        assert "SCHEMA CONTEXT (manas):" in result["injected_context"]
+        assert "current_focus" in result["injected_context"]
+
