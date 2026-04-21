@@ -42,40 +42,40 @@ All subconscious MCP tools
 --------------------------
 Conversation management (via :class:`SubconsciousContextProvider`):
 
-+----------------------------------+---------------------------------------------------------------+
-| Tool                             | Method                                                        |
-+==================================+===============================================================+
-| ``create_orchestration``         | :meth:`SubconsciousContextProvider.create_orchestration`      |
-+----------------------------------+---------------------------------------------------------------+
-| ``get_conversation``             | :meth:`SubconsciousContextProvider.get_context`               |
-+----------------------------------+---------------------------------------------------------------+
-| ``persist_message``              | :meth:`SubconsciousContextProvider.persist_message`           |
-+----------------------------------+---------------------------------------------------------------+
-| ``persist_conversation_turn``    | :meth:`SubconsciousContextProvider.persist_conversation_turn` |
-+----------------------------------+---------------------------------------------------------------+
-| ``list_orchestrations``          | :meth:`SubconsciousContextProvider.list_orchestrations`       |
-+----------------------------------+---------------------------------------------------------------+
-| ``complete_orchestration``       | :meth:`SubconsciousContextProvider.complete_orchestration`    |
-+----------------------------------+---------------------------------------------------------------+
++--------------------------------+-------------------------------------------------------------+
+| Tool                           | Method                                                      |
++================================+=============================================================+
+| ``create_orchestration``       | :meth:`SubconsciousContextProvider.create_orchestration`    |
++--------------------------------+-------------------------------------------------------------+
+| ``get_conversation``           | :meth:`SubconsciousContextProvider.get_context`             |
++--------------------------------+-------------------------------------------------------------+
+| ``persist_message``            | :meth:`SubconsciousContextProvider.persist_message`         |
++--------------------------------+-------------------------------------------------------------+
+| ``persist_conversation_turn``  | :meth:`SubconsciousContextProvider.persist_conversation_turn`|
++--------------------------------+-------------------------------------------------------------+
+| ``list_orchestrations``        | :meth:`SubconsciousContextProvider.list_orchestrations`     |
++--------------------------------+-------------------------------------------------------------+
+| ``complete_orchestration``     | :meth:`SubconsciousContextProvider.complete_orchestration`  |
++--------------------------------+-------------------------------------------------------------+
 
 Schema context management (via :class:`SubconsciousSchemaContextProvider`):
 
-+-------------------------------+----------------------------------------------------------------+
-| Tool                          | Method                                                         |
-+===============================+================================================================+
-| ``get_schema_context``        | :meth:`SubconsciousSchemaContextProvider.get_context`          |
-|                               | and :meth:`SubconsciousSchemaContextProvider.get_schema_context`|
-+-------------------------------+----------------------------------------------------------------+
-| ``store_schema_context``      | :meth:`SubconsciousSchemaContextProvider.store_schema_context` |
-+-------------------------------+----------------------------------------------------------------+
-| ``list_schema_contexts``      | :meth:`SubconsciousSchemaContextProvider.list_schema_contexts` |
-+-------------------------------+----------------------------------------------------------------+
-| ``get_schema``                | :meth:`SubconsciousSchemaContextProvider.get_schema`           |
-+-------------------------------+----------------------------------------------------------------+
-| ``list_schemas``              | :meth:`SubconsciousSchemaContextProvider.list_schemas`         |
-+-------------------------------+----------------------------------------------------------------+
-| ``initialize_schema_contexts``| :meth:`SubconsciousSchemaContextProvider.initialize_schema_contexts`|
-+-------------------------------+----------------------------------------------------------------+
++--------------------------------+----------------------------------------------------------------------+
+| Tool                           | Method                                                               |
++================================+======================================================================+
+| ``get_schema_context``         | :meth:`SubconsciousSchemaContextProvider.get_context` and            |
+|                                | :meth:`SubconsciousSchemaContextProvider.get_schema_context`         |
++--------------------------------+----------------------------------------------------------------------+
+| ``store_schema_context``       | :meth:`SubconsciousSchemaContextProvider.store_schema_context`       |
++--------------------------------+----------------------------------------------------------------------+
+| ``list_schema_contexts``       | :meth:`SubconsciousSchemaContextProvider.list_schema_contexts`       |
++--------------------------------+----------------------------------------------------------------------+
+| ``get_schema``                 | :meth:`SubconsciousSchemaContextProvider.get_schema`                 |
++--------------------------------+----------------------------------------------------------------------+
+| ``list_schemas``               | :meth:`SubconsciousSchemaContextProvider.list_schemas`               |
++--------------------------------+----------------------------------------------------------------------+
+| ``initialize_schema_contexts`` | :meth:`SubconsciousSchemaContextProvider.initialize_schema_contexts` |
++--------------------------------+----------------------------------------------------------------------+
 
 Key advantages
 --------------
