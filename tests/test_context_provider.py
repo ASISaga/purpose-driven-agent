@@ -12,6 +12,16 @@ Coverage targets
 - SubconsciousContextProvider.persist_message calls persist_message tool.
 - SubconsciousContextProvider.persist_conversation_turn calls persist_conversation_turn tool.
 - SubconsciousContextProvider persistence methods return None on failure.
+- SubconsciousContextProvider.create_orchestration calls create_orchestration tool.
+- SubconsciousContextProvider.create_orchestration passes orchestration_id and purpose.
+- SubconsciousContextProvider.create_orchestration passes agents when provided.
+- SubconsciousContextProvider.create_orchestration returns None on failure.
+- SubconsciousContextProvider.list_orchestrations calls list_orchestrations tool.
+- SubconsciousContextProvider.list_orchestrations passes status filter.
+- SubconsciousContextProvider.list_orchestrations returns None on failure.
+- SubconsciousContextProvider.complete_orchestration calls complete_orchestration tool.
+- SubconsciousContextProvider.complete_orchestration passes summary.
+- SubconsciousContextProvider.complete_orchestration returns None on failure.
 - Agent.set_context_provider registers the provider.
 - handle_event includes "injected_context" in the result.
 - handle_event stores injected_context in the MCP context server.
@@ -31,6 +41,14 @@ Coverage targets
 - SubconsciousSchemaContextProvider.store_schema_context returns None on failure.
 - SubconsciousSchemaContextProvider.list_schema_contexts calls list_schema_contexts tool.
 - SubconsciousSchemaContextProvider.list_schema_contexts returns None on failure.
+- SubconsciousSchemaContextProvider.get_schema calls get_schema tool.
+- SubconsciousSchemaContextProvider.get_schema uses schema_name.
+- SubconsciousSchemaContextProvider.get_schema returns None on failure.
+- SubconsciousSchemaContextProvider.list_schemas calls list_schemas tool.
+- SubconsciousSchemaContextProvider.list_schemas returns None on failure.
+- SubconsciousSchemaContextProvider.initialize_schema_contexts calls initialize_schema_contexts tool.
+- SubconsciousSchemaContextProvider.initialize_schema_contexts passes force flag.
+- SubconsciousSchemaContextProvider.initialize_schema_contexts returns None on failure.
 - create_subconscious_schema_provider factory returns a configured SubconsciousSchemaContextProvider.
 - SubconsciousSchemaContextProvider exported from top-level package.
 - Agent.get_schema_context routes via registered "subconscious" MCP server.
@@ -41,6 +59,34 @@ Coverage targets
 - Agent.store_schema_context falls back to context_provider when it is a matching SubconsciousSchemaContextProvider.
 - Agent.store_schema_context raises RuntimeError when no server or provider available.
 - Agent.store_schema_context returns None on MCP server error.
+- Agent.list_schema_contexts routes via registered "subconscious" server.
+- Agent.list_schema_contexts falls back to matching SubconsciousSchemaContextProvider.
+- Agent.list_schema_contexts raises RuntimeError when neither available.
+- Agent.list_schema_contexts returns None on MCP server error.
+- Agent.get_schema routes via registered "subconscious" server.
+- Agent.get_schema falls back to matching SubconsciousSchemaContextProvider.
+- Agent.get_schema raises RuntimeError when neither available.
+- Agent.get_schema returns None on MCP server error.
+- Agent.list_schemas routes via registered "subconscious" server.
+- Agent.list_schemas falls back to any SubconsciousSchemaContextProvider.
+- Agent.list_schemas raises RuntimeError when neither available.
+- Agent.list_schemas returns None on MCP server error.
+- Agent.initialize_schema_contexts routes via registered "subconscious" server.
+- Agent.initialize_schema_contexts falls back to any SubconsciousSchemaContextProvider.
+- Agent.initialize_schema_contexts passes force flag.
+- Agent.initialize_schema_contexts raises RuntimeError when neither available.
+- Agent.create_orchestration routes via registered "subconscious" server.
+- Agent.create_orchestration falls back to matching SubconsciousContextProvider.
+- Agent.create_orchestration raises RuntimeError when neither available.
+- Agent.create_orchestration returns None on MCP server error.
+- Agent.list_orchestrations routes via registered "subconscious" server.
+- Agent.list_orchestrations falls back to SubconsciousContextProvider.
+- Agent.list_orchestrations raises RuntimeError when neither available.
+- Agent.list_orchestrations returns None on MCP server error.
+- Agent.complete_orchestration routes via registered "subconscious" server.
+- Agent.complete_orchestration falls back to matching SubconsciousContextProvider.
+- Agent.complete_orchestration raises RuntimeError when neither available.
+- Agent.complete_orchestration returns None on MCP server error.
 """
 
 import pytest
@@ -1034,4 +1080,631 @@ class TestAgentSchemaContextMethods:
         assert result["status"] == "success"
         assert "SCHEMA CONTEXT (manas):" in result["injected_context"]
         assert "current_focus" in result["injected_context"]
+
+
+# ---------------------------------------------------------------------------
+# SubconsciousContextProvider — orchestration management methods
+# ---------------------------------------------------------------------------
+
+
+class TestSubconsciousContextProviderOrchestration:
+    @pytest.mark.asyncio
+    async def test_create_orchestration_calls_tool(self) -> None:
+        server = StubMCPServer({"orchestration_id": "orch-1", "status": "active"})
+        provider = SubconsciousContextProvider(
+            mcp_server=server, orchestration_id="orch-1"
+        )
+        result = await provider.create_orchestration(purpose="Q2 marketing strategy")
+        assert result == {"orchestration_id": "orch-1", "status": "active"}
+        assert len(server.calls) == 1
+        call = server.calls[0]
+        assert call["tool"] == "create_orchestration"
+        assert call["params"]["orchestration_id"] == "orch-1"
+        assert call["params"]["purpose"] == "Q2 marketing strategy"
+
+    @pytest.mark.asyncio
+    async def test_create_orchestration_passes_agents(self) -> None:
+        server = StubMCPServer({})
+        provider = SubconsciousContextProvider(
+            mcp_server=server, orchestration_id="orch-1"
+        )
+        await provider.create_orchestration(purpose="Q2", agents=["cmo", "cfo"])
+        assert server.calls[0]["params"]["agents"] == ["cmo", "cfo"]
+
+    @pytest.mark.asyncio
+    async def test_create_orchestration_agents_none_by_default(self) -> None:
+        server = StubMCPServer({})
+        provider = SubconsciousContextProvider(
+            mcp_server=server, orchestration_id="orch-1"
+        )
+        await provider.create_orchestration(purpose="Q2")
+        assert server.calls[0]["params"]["agents"] is None
+
+    @pytest.mark.asyncio
+    async def test_create_orchestration_returns_none_on_failure(self) -> None:
+        provider = SubconsciousContextProvider(
+            mcp_server=FailingMCPServer(), orchestration_id="orch-1"
+        )
+        result = await provider.create_orchestration(purpose="Q2")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_list_orchestrations_calls_tool(self) -> None:
+        server = StubMCPServer([{"orchestration_id": "orch-1"}, {"orchestration_id": "orch-2"}])
+        provider = SubconsciousContextProvider(
+            mcp_server=server, orchestration_id="orch-1"
+        )
+        result = await provider.list_orchestrations()
+        assert isinstance(result, list)
+        assert len(server.calls) == 1
+        assert server.calls[0]["tool"] == "list_orchestrations"
+
+    @pytest.mark.asyncio
+    async def test_list_orchestrations_passes_status_filter(self) -> None:
+        server = StubMCPServer([])
+        provider = SubconsciousContextProvider(
+            mcp_server=server, orchestration_id="orch-1"
+        )
+        await provider.list_orchestrations(status="active")
+        assert server.calls[0]["params"]["status"] == "active"
+
+    @pytest.mark.asyncio
+    async def test_list_orchestrations_default_status_is_none(self) -> None:
+        server = StubMCPServer([])
+        provider = SubconsciousContextProvider(
+            mcp_server=server, orchestration_id="orch-1"
+        )
+        await provider.list_orchestrations()
+        assert server.calls[0]["params"]["status"] is None
+
+    @pytest.mark.asyncio
+    async def test_list_orchestrations_returns_none_on_failure(self) -> None:
+        provider = SubconsciousContextProvider(
+            mcp_server=FailingMCPServer(), orchestration_id="orch-1"
+        )
+        result = await provider.list_orchestrations()
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_complete_orchestration_calls_tool(self) -> None:
+        server = StubMCPServer({"orchestration_id": "orch-1", "status": "completed"})
+        provider = SubconsciousContextProvider(
+            mcp_server=server, orchestration_id="orch-1"
+        )
+        result = await provider.complete_orchestration(summary="Done")
+        assert result == {"orchestration_id": "orch-1", "status": "completed"}
+        assert len(server.calls) == 1
+        call = server.calls[0]
+        assert call["tool"] == "complete_orchestration"
+        assert call["params"]["orchestration_id"] == "orch-1"
+        assert call["params"]["summary"] == "Done"
+
+    @pytest.mark.asyncio
+    async def test_complete_orchestration_summary_none_by_default(self) -> None:
+        server = StubMCPServer({})
+        provider = SubconsciousContextProvider(
+            mcp_server=server, orchestration_id="orch-1"
+        )
+        await provider.complete_orchestration()
+        assert server.calls[0]["params"]["summary"] is None
+
+    @pytest.mark.asyncio
+    async def test_complete_orchestration_uses_self_orchestration_id(self) -> None:
+        server = StubMCPServer({})
+        provider = SubconsciousContextProvider(
+            mcp_server=server, orchestration_id="orch-cmo-q3"
+        )
+        await provider.complete_orchestration()
+        assert server.calls[0]["params"]["orchestration_id"] == "orch-cmo-q3"
+
+    @pytest.mark.asyncio
+    async def test_complete_orchestration_returns_none_on_failure(self) -> None:
+        provider = SubconsciousContextProvider(
+            mcp_server=FailingMCPServer(), orchestration_id="orch-1"
+        )
+        result = await provider.complete_orchestration()
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# SubconsciousSchemaContextProvider — schema definition + bootstrap methods
+# ---------------------------------------------------------------------------
+
+
+class TestSubconsciousSchemaContextProviderSchemaDefinition:
+    @pytest.mark.asyncio
+    async def test_get_schema_calls_tool(self) -> None:
+        schema_def = {"$schema": "https://json-schema.org/draft/2020-12/schema", "title": "Manas"}
+        server = StubMCPServer(schema_def)
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=server, schema_name="manas", context_id="cmo"
+        )
+        result = await provider.get_schema()
+        assert result == schema_def
+        assert len(server.calls) == 1
+        assert server.calls[0]["tool"] == "get_schema"
+        assert server.calls[0]["params"]["schema_name"] == "manas"
+
+    @pytest.mark.asyncio
+    async def test_get_schema_uses_self_schema_name(self) -> None:
+        server = StubMCPServer({})
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=server, schema_name="chitta", context_id="cmo"
+        )
+        await provider.get_schema()
+        assert server.calls[0]["params"]["schema_name"] == "chitta"
+
+    @pytest.mark.asyncio
+    async def test_get_schema_returns_none_on_failure(self) -> None:
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=FailingMCPServer(), schema_name="manas", context_id="cmo"
+        )
+        result = await provider.get_schema()
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_list_schemas_calls_tool(self) -> None:
+        schemas = ["manas", "buddhi", "ahankara", "chitta", "action-plan"]
+        server = StubMCPServer(schemas)
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=server, schema_name="manas", context_id="cmo"
+        )
+        result = await provider.list_schemas()
+        assert result == schemas
+        assert len(server.calls) == 1
+        assert server.calls[0]["tool"] == "list_schemas"
+
+    @pytest.mark.asyncio
+    async def test_list_schemas_sends_empty_params(self) -> None:
+        server = StubMCPServer([])
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=server, schema_name="manas", context_id="cmo"
+        )
+        await provider.list_schemas()
+        assert server.calls[0]["params"] == {}
+
+    @pytest.mark.asyncio
+    async def test_list_schemas_returns_none_on_failure(self) -> None:
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=FailingMCPServer(), schema_name="manas", context_id="cmo"
+        )
+        result = await provider.list_schemas()
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_initialize_schema_contexts_calls_tool(self) -> None:
+        init_result = {"created": 7, "skipped": 0}
+        server = StubMCPServer(init_result)
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=server, schema_name="manas", context_id="cmo"
+        )
+        result = await provider.initialize_schema_contexts()
+        assert result == init_result
+        assert len(server.calls) == 1
+        assert server.calls[0]["tool"] == "initialize_schema_contexts"
+        assert server.calls[0]["params"]["force"] is False
+
+    @pytest.mark.asyncio
+    async def test_initialize_schema_contexts_force_true(self) -> None:
+        server = StubMCPServer({"created": 7})
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=server, schema_name="manas", context_id="cmo"
+        )
+        await provider.initialize_schema_contexts(force=True)
+        assert server.calls[0]["params"]["force"] is True
+
+    @pytest.mark.asyncio
+    async def test_initialize_schema_contexts_returns_none_on_failure(self) -> None:
+        provider = SubconsciousSchemaContextProvider(
+            mcp_server=FailingMCPServer(), schema_name="manas", context_id="cmo"
+        )
+        result = await provider.initialize_schema_contexts()
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# PurposeDrivenAgent — all remaining subconscious convenience methods
+# ---------------------------------------------------------------------------
+
+
+class TestAgentRemainingSubconsciousMethods:
+    @pytest.fixture
+    async def agent(self) -> GenericPurposeDrivenAgent:
+        a = GenericPurposeDrivenAgent(
+            agent_id="all-tools-agent",
+            purpose="Test all subconscious tools",
+            adapter_name="test",
+        )
+        await a.initialize()
+        return a
+
+    # ---- list_schema_contexts ----
+
+    @pytest.mark.asyncio
+    async def test_list_schema_contexts_via_server(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        contexts = [{"context_id": "cmo"}, {"context_id": "cfo"}]
+        server = StubMCPServer(contexts)
+        agent.register_mcp_server("subconscious", server)
+        result = await agent.list_schema_contexts("manas")
+        assert result == contexts
+        assert server.calls[0]["tool"] == "list_schema_contexts"
+        assert server.calls[0]["params"] == {"schema_name": "manas"}
+
+    @pytest.mark.asyncio
+    async def test_list_schema_contexts_server_failure_returns_none(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        agent.register_mcp_server("subconscious", FailingMCPServer())
+        result = await agent.list_schema_contexts("manas")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_list_schema_contexts_via_matching_provider(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        contexts = [{"context_id": "cmo"}]
+        server = StubMCPServer(contexts)
+        agent.set_context_provider(
+            SubconsciousSchemaContextProvider(
+                mcp_server=server, schema_name="buddhi", context_id="cfo"
+            )
+        )
+        result = await agent.list_schema_contexts("buddhi")
+        assert result == contexts
+
+    @pytest.mark.asyncio
+    async def test_list_schema_contexts_schema_mismatch_raises(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        agent.set_context_provider(
+            SubconsciousSchemaContextProvider(
+                mcp_server=StubMCPServer(), schema_name="manas", context_id="cmo"
+            )
+        )
+        with pytest.raises(RuntimeError, match="subconscious MCP server"):
+            await agent.list_schema_contexts("buddhi")
+
+    @pytest.mark.asyncio
+    async def test_list_schema_contexts_no_server_raises(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        with pytest.raises(RuntimeError, match="subconscious MCP server"):
+            await agent.list_schema_contexts("manas")
+
+    # ---- get_schema ----
+
+    @pytest.mark.asyncio
+    async def test_get_schema_via_server(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        schema_def = {"title": "Manas"}
+        server = StubMCPServer(schema_def)
+        agent.register_mcp_server("subconscious", server)
+        result = await agent.get_schema("manas")
+        assert result == schema_def
+        assert server.calls[0]["tool"] == "get_schema"
+        assert server.calls[0]["params"] == {"schema_name": "manas"}
+
+    @pytest.mark.asyncio
+    async def test_get_schema_server_failure_returns_none(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        agent.register_mcp_server("subconscious", FailingMCPServer())
+        result = await agent.get_schema("manas")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_schema_via_matching_provider(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        schema_def = {"title": "Chitta"}
+        server = StubMCPServer(schema_def)
+        agent.set_context_provider(
+            SubconsciousSchemaContextProvider(
+                mcp_server=server, schema_name="chitta", context_id="cmo"
+            )
+        )
+        result = await agent.get_schema("chitta")
+        assert result == schema_def
+
+    @pytest.mark.asyncio
+    async def test_get_schema_schema_mismatch_raises(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        agent.set_context_provider(
+            SubconsciousSchemaContextProvider(
+                mcp_server=StubMCPServer(), schema_name="manas", context_id="cmo"
+            )
+        )
+        with pytest.raises(RuntimeError, match="subconscious MCP server"):
+            await agent.get_schema("buddhi")
+
+    @pytest.mark.asyncio
+    async def test_get_schema_no_server_raises(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        with pytest.raises(RuntimeError, match="subconscious MCP server"):
+            await agent.get_schema("manas")
+
+    # ---- list_schemas ----
+
+    @pytest.mark.asyncio
+    async def test_list_schemas_via_server(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        schemas = ["manas", "buddhi", "chitta"]
+        server = StubMCPServer(schemas)
+        agent.register_mcp_server("subconscious", server)
+        result = await agent.list_schemas()
+        assert result == schemas
+        assert server.calls[0]["tool"] == "list_schemas"
+
+    @pytest.mark.asyncio
+    async def test_list_schemas_server_failure_returns_none(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        agent.register_mcp_server("subconscious", FailingMCPServer())
+        result = await agent.list_schemas()
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_list_schemas_via_schema_provider(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        schemas = ["manas"]
+        server = StubMCPServer(schemas)
+        agent.set_context_provider(
+            SubconsciousSchemaContextProvider(
+                mcp_server=server, schema_name="manas", context_id="cmo"
+            )
+        )
+        result = await agent.list_schemas()
+        assert result == schemas
+
+    @pytest.mark.asyncio
+    async def test_list_schemas_no_server_raises(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        with pytest.raises(RuntimeError, match="subconscious MCP server"):
+            await agent.list_schemas()
+
+    # ---- initialize_schema_contexts ----
+
+    @pytest.mark.asyncio
+    async def test_initialize_schema_contexts_via_server(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        init_result = {"created": 7}
+        server = StubMCPServer(init_result)
+        agent.register_mcp_server("subconscious", server)
+        result = await agent.initialize_schema_contexts()
+        assert result == init_result
+        assert server.calls[0]["tool"] == "initialize_schema_contexts"
+        assert server.calls[0]["params"] == {"force": False}
+
+    @pytest.mark.asyncio
+    async def test_initialize_schema_contexts_passes_force(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        server = StubMCPServer({"created": 3})
+        agent.register_mcp_server("subconscious", server)
+        await agent.initialize_schema_contexts(force=True)
+        assert server.calls[0]["params"]["force"] is True
+
+    @pytest.mark.asyncio
+    async def test_initialize_schema_contexts_server_failure_returns_none(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        agent.register_mcp_server("subconscious", FailingMCPServer())
+        result = await agent.initialize_schema_contexts()
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_initialize_schema_contexts_via_schema_provider(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        init_result = {"created": 5}
+        server = StubMCPServer(init_result)
+        agent.set_context_provider(
+            SubconsciousSchemaContextProvider(
+                mcp_server=server, schema_name="manas", context_id="cmo"
+            )
+        )
+        result = await agent.initialize_schema_contexts()
+        assert result == init_result
+
+    @pytest.mark.asyncio
+    async def test_initialize_schema_contexts_no_server_raises(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        with pytest.raises(RuntimeError, match="subconscious MCP server"):
+            await agent.initialize_schema_contexts()
+
+    # ---- create_orchestration ----
+
+    @pytest.mark.asyncio
+    async def test_create_orchestration_via_server(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        record = {"orchestration_id": "orch-1", "status": "active"}
+        server = StubMCPServer(record)
+        agent.register_mcp_server("subconscious", server)
+        result = await agent.create_orchestration(
+            orchestration_id="orch-1", purpose="Q2 marketing strategy"
+        )
+        assert result == record
+        assert server.calls[0]["tool"] == "create_orchestration"
+        assert server.calls[0]["params"]["orchestration_id"] == "orch-1"
+        assert server.calls[0]["params"]["purpose"] == "Q2 marketing strategy"
+
+    @pytest.mark.asyncio
+    async def test_create_orchestration_passes_agents(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        server = StubMCPServer({})
+        agent.register_mcp_server("subconscious", server)
+        await agent.create_orchestration(
+            orchestration_id="orch-1", purpose="Q2", agents=["cmo", "cfo"]
+        )
+        assert server.calls[0]["params"]["agents"] == ["cmo", "cfo"]
+
+    @pytest.mark.asyncio
+    async def test_create_orchestration_server_failure_returns_none(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        agent.register_mcp_server("subconscious", FailingMCPServer())
+        result = await agent.create_orchestration(orchestration_id="orch-1", purpose="Q2")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_create_orchestration_via_matching_provider(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        record = {"orchestration_id": "orch-cmo-q2"}
+        server = StubMCPServer(record)
+        agent.set_context_provider(
+            SubconsciousContextProvider(mcp_server=server, orchestration_id="orch-cmo-q2")
+        )
+        result = await agent.create_orchestration(
+            orchestration_id="orch-cmo-q2", purpose="Q2"
+        )
+        assert result == record
+
+    @pytest.mark.asyncio
+    async def test_create_orchestration_orchestration_mismatch_raises(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        agent.set_context_provider(
+            SubconsciousContextProvider(
+                mcp_server=StubMCPServer(), orchestration_id="orch-cmo-q2"
+            )
+        )
+        with pytest.raises(RuntimeError, match="subconscious MCP server"):
+            await agent.create_orchestration(orchestration_id="orch-other", purpose="Q3")
+
+    @pytest.mark.asyncio
+    async def test_create_orchestration_no_server_raises(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        with pytest.raises(RuntimeError, match="subconscious MCP server"):
+            await agent.create_orchestration(orchestration_id="orch-1", purpose="Q2")
+
+    # ---- list_orchestrations ----
+
+    @pytest.mark.asyncio
+    async def test_list_orchestrations_via_server(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        records = [{"orchestration_id": "orch-1"}, {"orchestration_id": "orch-2"}]
+        server = StubMCPServer(records)
+        agent.register_mcp_server("subconscious", server)
+        result = await agent.list_orchestrations()
+        assert result == records
+        assert server.calls[0]["tool"] == "list_orchestrations"
+        assert server.calls[0]["params"] == {"status": None}
+
+    @pytest.mark.asyncio
+    async def test_list_orchestrations_passes_status(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        server = StubMCPServer([])
+        agent.register_mcp_server("subconscious", server)
+        await agent.list_orchestrations(status="active")
+        assert server.calls[0]["params"]["status"] == "active"
+
+    @pytest.mark.asyncio
+    async def test_list_orchestrations_server_failure_returns_none(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        agent.register_mcp_server("subconscious", FailingMCPServer())
+        result = await agent.list_orchestrations()
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_list_orchestrations_via_conversation_provider(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        records = [{"orchestration_id": "orch-cmo-q2"}]
+        server = StubMCPServer(records)
+        agent.set_context_provider(
+            SubconsciousContextProvider(mcp_server=server, orchestration_id="orch-cmo-q2")
+        )
+        result = await agent.list_orchestrations()
+        assert result == records
+
+    @pytest.mark.asyncio
+    async def test_list_orchestrations_no_server_raises(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        with pytest.raises(RuntimeError, match="subconscious MCP server"):
+            await agent.list_orchestrations()
+
+    # ---- complete_orchestration ----
+
+    @pytest.mark.asyncio
+    async def test_complete_orchestration_via_server(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        record = {"orchestration_id": "orch-1", "status": "completed"}
+        server = StubMCPServer(record)
+        agent.register_mcp_server("subconscious", server)
+        result = await agent.complete_orchestration(
+            orchestration_id="orch-1", summary="Q2 done"
+        )
+        assert result == record
+        assert server.calls[0]["tool"] == "complete_orchestration"
+        assert server.calls[0]["params"]["orchestration_id"] == "orch-1"
+        assert server.calls[0]["params"]["summary"] == "Q2 done"
+
+    @pytest.mark.asyncio
+    async def test_complete_orchestration_summary_none_by_default(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        server = StubMCPServer({})
+        agent.register_mcp_server("subconscious", server)
+        await agent.complete_orchestration(orchestration_id="orch-1")
+        assert server.calls[0]["params"]["summary"] is None
+
+    @pytest.mark.asyncio
+    async def test_complete_orchestration_server_failure_returns_none(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        agent.register_mcp_server("subconscious", FailingMCPServer())
+        result = await agent.complete_orchestration(orchestration_id="orch-1")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_complete_orchestration_via_matching_provider(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        record = {"orchestration_id": "orch-cmo-q2", "status": "completed"}
+        server = StubMCPServer(record)
+        agent.set_context_provider(
+            SubconsciousContextProvider(mcp_server=server, orchestration_id="orch-cmo-q2")
+        )
+        result = await agent.complete_orchestration(
+            orchestration_id="orch-cmo-q2", summary="Done"
+        )
+        assert result == record
+
+    @pytest.mark.asyncio
+    async def test_complete_orchestration_orchestration_mismatch_raises(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        agent.set_context_provider(
+            SubconsciousContextProvider(
+                mcp_server=StubMCPServer(), orchestration_id="orch-cmo-q2"
+            )
+        )
+        with pytest.raises(RuntimeError, match="subconscious MCP server"):
+            await agent.complete_orchestration(orchestration_id="orch-other")
+
+    @pytest.mark.asyncio
+    async def test_complete_orchestration_no_server_raises(
+        self, agent: GenericPurposeDrivenAgent
+    ) -> None:
+        with pytest.raises(RuntimeError, match="subconscious MCP server"):
+            await agent.complete_orchestration(orchestration_id="orch-1")
 

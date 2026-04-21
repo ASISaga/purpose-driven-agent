@@ -18,25 +18,64 @@ The pipeline has three layers:
    Storage.
 2. **Context providers** — bridge the MCP server to the agent:
 
-   - :class:`SubconsciousContextProvider` — retrieves conversation history
-     via ``get_conversation`` and engineers it into a ``CONVERSATION HISTORY``
-     instruction block.  Exposes :meth:`~SubconsciousContextProvider.persist_message`
-     and :meth:`~SubconsciousContextProvider.persist_conversation_turn` for
-     writing new messages back to the server.
-   - :class:`SubconsciousSchemaContextProvider` — retrieves a JSON-LD
-     mind-schema document (e.g. Manas, Buddhi) via ``get_schema_context``
-     and engineers it into a ``SCHEMA CONTEXT`` instruction block.  Exposes
-     :meth:`~SubconsciousSchemaContextProvider.store_schema_context` for
-     persisting updated schema documents back to the server, and
-     :meth:`~SubconsciousSchemaContextProvider.list_schema_contexts` for
-     enumerating available contexts.
+   - :class:`SubconsciousContextProvider` — manages one orchestration:
+     retrieves conversation history via ``get_conversation``, creates an
+     orchestration via ``create_orchestration``, persists messages via
+     ``persist_message`` / ``persist_conversation_turn``, lists all
+     orchestrations via ``list_orchestrations``, and closes the orchestration
+     via ``complete_orchestration``.
+   - :class:`SubconsciousSchemaContextProvider` — manages the JSON-LD mind
+     schemas: retrieves a stored schema context document via
+     ``get_schema_context``, persists an updated document via
+     ``store_schema_context``, lists stored contexts via
+     ``list_schema_contexts``, retrieves a schema definition via
+     ``get_schema``, lists all schema names via ``list_schemas``, and
+     bootstraps schema contexts from the repo's mind-schema files via
+     ``initialize_schema_contexts``.
 
 3. **PurposeDrivenAgent** — injects the ``Context.instructions`` into its
    reasoning loop and caches them via :class:`~purpose_driven_agent.ContextMCPServer`.
-   Convenience methods :meth:`~purpose_driven_agent.PurposeDrivenAgent.get_schema_context`
-   and :meth:`~purpose_driven_agent.PurposeDrivenAgent.store_schema_context`
-   allow direct schema context I/O when the ``"subconscious"`` MCP server is
-   registered.
+   Convenience methods cover every subconscious MCP tool so that
+   ``Later, logic will be added to invoke these selectively``.
+
+All subconscious MCP tools
+--------------------------
+Conversation management (via :class:`SubconsciousContextProvider`):
+
++----------------------------------+---------------------------------------------------------------+
+| Tool                             | Method                                                        |
++==================================+===============================================================+
+| ``create_orchestration``         | :meth:`SubconsciousContextProvider.create_orchestration`      |
++----------------------------------+---------------------------------------------------------------+
+| ``get_conversation``             | :meth:`SubconsciousContextProvider.get_context`               |
++----------------------------------+---------------------------------------------------------------+
+| ``persist_message``              | :meth:`SubconsciousContextProvider.persist_message`           |
++----------------------------------+---------------------------------------------------------------+
+| ``persist_conversation_turn``    | :meth:`SubconsciousContextProvider.persist_conversation_turn` |
++----------------------------------+---------------------------------------------------------------+
+| ``list_orchestrations``          | :meth:`SubconsciousContextProvider.list_orchestrations`       |
++----------------------------------+---------------------------------------------------------------+
+| ``complete_orchestration``       | :meth:`SubconsciousContextProvider.complete_orchestration`    |
++----------------------------------+---------------------------------------------------------------+
+
+Schema context management (via :class:`SubconsciousSchemaContextProvider`):
+
++-------------------------------+----------------------------------------------------------------+
+| Tool                          | Method                                                         |
++===============================+================================================================+
+| ``get_schema_context``        | :meth:`SubconsciousSchemaContextProvider.get_context`          |
+|                               | and :meth:`SubconsciousSchemaContextProvider.get_schema_context`|
++-------------------------------+----------------------------------------------------------------+
+| ``store_schema_context``      | :meth:`SubconsciousSchemaContextProvider.store_schema_context` |
++-------------------------------+----------------------------------------------------------------+
+| ``list_schema_contexts``      | :meth:`SubconsciousSchemaContextProvider.list_schema_contexts` |
++-------------------------------+----------------------------------------------------------------+
+| ``get_schema``                | :meth:`SubconsciousSchemaContextProvider.get_schema`           |
++-------------------------------+----------------------------------------------------------------+
+| ``list_schemas``              | :meth:`SubconsciousSchemaContextProvider.list_schemas`         |
++-------------------------------+----------------------------------------------------------------+
+| ``initialize_schema_contexts``| :meth:`SubconsciousSchemaContextProvider.initialize_schema_contexts`|
++-------------------------------+----------------------------------------------------------------+
 
 Key advantages
 --------------
@@ -61,27 +100,40 @@ Example — conversation history::
         adapter_name="marketing",
     )
     await agent.initialize()
-    agent.set_context_provider(
-        create_subconscious_provider(orchestration_id="orch-cmo-2026-q2")
-    )
+    provider = create_subconscious_provider(orchestration_id="orch-cmo-2026-q2")
 
+    # Register the orchestration on the server before the first event
+    await provider.create_orchestration(purpose="Q2 marketing strategy")
+
+    agent.set_context_provider(provider)
     result = await agent.handle_event({"type": "strategy_review"})
     # result["injected_context"] contains the prior conversation as context
+
+    # Mark the orchestration complete when done
+    await provider.complete_orchestration(summary="Q2 strategy finalised")
 
 Example — schema context (Manas / agent mind state)::
 
     from purpose_driven_agent.context_provider import create_subconscious_schema_provider
 
-    agent.set_context_provider(
-        create_subconscious_schema_provider(schema_name="manas", context_id="cmo")
+    schema_provider = create_subconscious_schema_provider(
+        schema_name="manas", context_id="cmo"
     )
 
+    # Optionally bootstrap schema contexts from the repo's mind-schema files
+    await schema_provider.initialize_schema_contexts()
+
+    agent.set_context_provider(schema_provider)
     result = await agent.handle_event({"type": "strategy_review"})
     # result["injected_context"] contains the agent's Manas document
 
-    # After processing, persist the updated mind state back to the server:
-    schema_provider = agent.context_provider
+    # Persist the updated mind state back to the server after processing
     await schema_provider.store_schema_context(updated_manas_document)
+
+    # Discover available schemas and list stored contexts
+    schemas = await schema_provider.list_schemas()
+    manas_def = await schema_provider.get_schema()
+    contexts = await schema_provider.list_schema_contexts()
 """
 
 from __future__ import annotations
@@ -355,6 +407,105 @@ class SubconsciousContextProvider(ContextProvider):
             )
             return None
 
+    async def create_orchestration(
+        self,
+        purpose: str,
+        agents: Optional[List[str]] = None,
+    ) -> Any:
+        """Register this orchestration on the subconscious MCP server.
+
+        Calls ``create_orchestration`` with :attr:`orchestration_id` and the
+        given *purpose*.  Should be called once before the first
+        :meth:`get_context` or :meth:`persist_message` call.  If the
+        orchestration already exists the server is expected to return it
+        without error.
+
+        Args:
+            purpose: Human-readable purpose for this orchestration
+                (e.g. ``"Q2 marketing strategy review"``).
+            agents: Optional list of agent IDs that participate in this
+                orchestration (e.g. ``["cmo", "cfo"]``).
+
+        Returns:
+            Orchestration record dict from the server, or ``None`` on failure.
+        """
+        try:
+            return await self.mcp_server.call_tool(
+                "create_orchestration",
+                {
+                    "orchestration_id": self.orchestration_id,
+                    "purpose": purpose,
+                    "agents": agents,
+                },
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self.logger.error(
+                "Failed to create orchestration '%s': %s",
+                self.orchestration_id,
+                exc,
+            )
+            return None
+
+    async def list_orchestrations(
+        self,
+        status: Optional[str] = None,
+    ) -> Any:
+        """List all orchestrations on the subconscious MCP server.
+
+        Calls ``list_orchestrations``.  The result is not filtered by
+        :attr:`orchestration_id` — it returns all orchestrations, optionally
+        filtered by *status*.
+
+        Args:
+            status: Optional status filter (e.g. ``"active"`` or
+                ``"completed"``).  When ``None``, all orchestrations are
+                returned.
+
+        Returns:
+            List of orchestration record dicts from the server, or ``None``
+            on failure.
+        """
+        try:
+            return await self.mcp_server.call_tool(
+                "list_orchestrations",
+                {"status": status},
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self.logger.error("Failed to list orchestrations: %s", exc)
+            return None
+
+    async def complete_orchestration(
+        self,
+        summary: Optional[str] = None,
+    ) -> Any:
+        """Mark this orchestration as completed on the subconscious MCP server.
+
+        Calls ``complete_orchestration`` with :attr:`orchestration_id`.
+
+        Args:
+            summary: Optional human-readable summary of the orchestration
+                outcome.
+
+        Returns:
+            Updated orchestration record from the server, or ``None`` on
+            failure.
+        """
+        try:
+            return await self.mcp_server.call_tool(
+                "complete_orchestration",
+                {
+                    "orchestration_id": self.orchestration_id,
+                    "summary": summary,
+                },
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self.logger.error(
+                "Failed to complete orchestration '%s': %s",
+                self.orchestration_id,
+                exc,
+            )
+            return None
+
 
 class SubconsciousSchemaContextProvider(ContextProvider):
     """ContextProvider backed by the ``subconscious.asisaga.com`` schema context store.
@@ -559,10 +710,78 @@ class SubconsciousSchemaContextProvider(ContextProvider):
             )
             return None
 
+    async def get_schema(self) -> Any:
+        """Retrieve the JSON Schema definition for this schema from the MCP server.
 
-# ---------------------------------------------------------------------------
-# Live server factory
-# ---------------------------------------------------------------------------
+        Calls ``get_schema`` on :attr:`mcp_server` with :attr:`schema_name`.
+        This returns the *schema definition* (the JSON Schema document that
+        describes valid mind documents), not a stored context document.
+
+        Returns:
+            Schema definition dict from the server, or ``None`` on failure.
+        """
+        try:
+            return await self.mcp_server.call_tool(
+                "get_schema",
+                {"schema_name": self.schema_name},
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self.logger.error(
+                "Failed to get schema definition for '%s': %s",
+                self.schema_name,
+                exc,
+            )
+            return None
+
+    async def list_schemas(self) -> Any:
+        """List all available mind-schema names from the MCP server.
+
+        Calls ``list_schemas`` on :attr:`mcp_server`.  Returns the names of
+        all schema definitions hosted by the server (e.g. ``"manas"``,
+        ``"buddhi"``, ``"ahankara"``, ``"chitta"``, ``"action-plan"``,
+        ``"entity-context"``, ``"entity-content"``).
+
+        Returns:
+            List of schema name strings (or dicts with metadata), or
+            ``None`` on failure.
+        """
+        try:
+            return await self.mcp_server.call_tool("list_schemas", {})
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self.logger.error("Failed to list schemas: %s", exc)
+            return None
+
+    async def initialize_schema_contexts(self, force: bool = False) -> Any:
+        """Bootstrap schema contexts from the repository's mind-schema files.
+
+        Calls ``initialize_schema_contexts`` on :attr:`mcp_server`.  This
+        one-time operation reads the JSON-LD seed documents from the
+        ``boardroom/mind/`` directory in the ``subconscious.asisaga.com``
+        repository and populates the ``SchemaContexts`` Azure Table with
+        initial agent context documents.
+
+        Should be called once before agents start reading from the server.
+        It is idempotent by default; set *force* to ``True`` to overwrite
+        existing documents.
+
+        Args:
+            force: When ``True``, overwrite existing schema context documents
+                with the seed data.  Defaults to ``False``.
+
+        Returns:
+            Initialisation result dict from the server (e.g. counts of
+            created / skipped records), or ``None`` on failure.
+        """
+        try:
+            return await self.mcp_server.call_tool(
+                "initialize_schema_contexts",
+                {"force": force},
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self.logger.error("Failed to initialize schema contexts: %s", exc)
+            return None
+
+
 
 #: Base URL of the live ASI Saga subconscious MCP server.
 SUBCONSCIOUS_MCP_URL: str = "https://subconscious.asisaga.com/mcp"
