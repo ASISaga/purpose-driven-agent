@@ -41,7 +41,7 @@ WORKDIR /app
 # ── Copy this layer's Python source ──────────────────────────────────────────
 # Only .py files from THIS repo. Parent .py files are already present via FROM.
 # Directory structure mirrors the AOS package layout.
-COPY src/purpose_driven_agent/ ./purpose_driven_agent/
+COPY --chown=aosuser:aosuser src/purpose_driven_agent/ ./purpose_driven_agent/
 
 # ── Compile to .pyc ───────────────────────────────────────────────────────────
 # Compiles this layer's .py against the full environment (parent .py files
