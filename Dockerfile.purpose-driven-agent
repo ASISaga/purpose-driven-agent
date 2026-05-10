@@ -50,11 +50,11 @@ COPY src/purpose_driven_agent/ ./purpose_driven_agent/
 RUN python -m compileall -j0 -q ./purpose_driven_agent/
 
 # ── Smoke test ────────────────────────────────────────────────────────────────
-RUN python -c "
+RUN <<EOF python
 from purpose_driven_agent import PurposeDrivenAgent
 print('PurposeDrivenAgent import: OK')
 print('Layer 2 smoke test passed.')
-"
+EOF
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FAS stage — stripped image for Foundry Agent Service
@@ -68,14 +68,14 @@ RUN find /app -name "*.py" -delete \
     && find /app -name "__pycache__" -type d | head -5
 
 # Verify .pyc files are present and .py files are gone
-RUN python -c "
+RUN <<EOF python
 import importlib.util, pathlib
 pyc = list(pathlib.Path('/app').rglob('*.pyc'))
 py  = list(pathlib.Path('/app').rglob('*.py'))
 assert len(pyc) > 0, 'No .pyc files found — compilation failed'
 assert len(py)  == 0, f'Found .py files in FAS image: {py}'
 print(f'FAS stage: {len(pyc)} .pyc files, 0 .py files. OK')
-"
+EOF
 
 USER aosuser
 CMD ["python", "-m", "purpose_driven_agent"]
