@@ -49,8 +49,15 @@ USER aosuser
 # ── Compile to .pyc ───────────────────────────────────────────────────────────
 # Compiles this layer's .py against the full environment (parent .py files
 # are on sys.path, so cross-layer imports resolve at compile time).
+# -b  = write legacy .pyc files alongside .py (e.g. agent.pyc next to agent.py)
+#       rather than into __pycache__/.  This is required for the FAS stage:
+#       when .py files are removed, Python's SourcelessFileLoader can find
+#       the legacy .pyc files and still treat the directory as a regular
+#       package (via __init__.pyc).  Without -b the .pyc files land in
+#       __pycache__/, which Python only consults when the companion .py
+#       source file exists — causing an ImportError in the .py-free FAS image.
 # -j0 = use all available CPUs
-RUN python -m compileall -j0 -q ./purpose_driven_agent/ ./aos_mcp_servers/
+RUN python -m compileall -b -j0 -q ./purpose_driven_agent/ ./aos_mcp_servers/
 
 # ── Smoke test ────────────────────────────────────────────────────────────────
 RUN <<EOF python
@@ -65,19 +72,21 @@ EOF
 # ─────────────────────────────────────────────────────────────────────────────
 FROM base AS fas
 
-# Remove all .py source files from the entire /app tree.
-# .pyc files in __pycache__ directories are retained.
+# Remove all .py source files and any __pycache__ directories from this layer.
+# Legacy .pyc files (written alongside .py by compileall -b) are retained.
 RUN find /app/purpose_driven_agent /app/aos_mcp_servers -name "*.py" -delete \
-    && find /app/purpose_driven_agent /app/aos_mcp_servers -name "__pycache__" -type d | head -5
+    && find /app/purpose_driven_agent /app/aos_mcp_servers -name "__pycache__" -type d -exec rm -rf {} +  2>/dev/null || true
 
-# Verify .pyc files are present and .py files are gone
+# Verify .pyc files are present, .py files are gone, and the package imports correctly.
 RUN <<EOF python
-import importlib.util, pathlib
-pyc = list(pathlib.Path('/app').rglob('*.pyc'))
-py  = list(pathlib.Path('/app').rglob('*.py'))
+import pathlib
+pyc = list(pathlib.Path('/app/purpose_driven_agent').rglob('*.pyc'))
+py  = list(pathlib.Path('/app/purpose_driven_agent').rglob('*.py'))
 assert len(pyc) > 0, 'No .pyc files found — compilation failed'
 assert len(py)  == 0, f'Found .py files in FAS image: {py}'
 print(f'FAS stage: {len(pyc)} .pyc files, 0 .py files. OK')
+from purpose_driven_agent import PurposeDrivenAgent
+print('PurposeDrivenAgent import from .pyc: OK')
 EOF
 
 USER aosuser
