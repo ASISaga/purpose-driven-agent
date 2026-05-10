@@ -1,0 +1,153 @@
+name: Update Base Image Digest
+
+on:
+  repository_dispatch:
+    types: [base-image-updated]
+
+concurrency:
+  group: update-base-image
+  cancel-in-progress: true
+
+jobs:
+  open-pr:
+    name: Open manifest update PR
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
+
+      - name: Validate dispatch payload
+        id: payload
+        run: |
+          BASE_IMAGE="${{ github.event.client_payload.base_image }}"
+          BASE_TAG="${{ github.event.client_payload.base_tag }}"
+          BASE_DIGEST="${{ github.event.client_payload.base_digest }}"
+          MAF_VERSION="${{ github.event.client_payload.maf_version }}"
+          TRIGGERED_BY="${{ github.event.client_payload.triggered_by }}"
+
+          if [[ -z "$BASE_DIGEST" ]]; then
+            echo "::error::base_digest missing from dispatch payload"
+            exit 1
+          fi
+          if ! echo "$BASE_DIGEST" | grep -qE '^sha256:[0-9a-f]{64}$'; then
+            echo "::error::Invalid digest: $BASE_DIGEST"
+            exit 1
+          fi
+
+          echo "base_image=${BASE_IMAGE}"       >> $GITHUB_OUTPUT
+          echo "base_tag=${BASE_TAG}"           >> $GITHUB_OUTPUT
+          echo "base_digest=${BASE_DIGEST}"     >> $GITHUB_OUTPUT
+          echo "maf_version=${MAF_VERSION}"     >> $GITHUB_OUTPUT
+          echo "triggered_by=${TRIGGERED_BY}"  >> $GITHUB_OUTPUT
+
+      - name: Check if update is needed
+        id: check
+        run: |
+          NEW_DIGEST="${{ steps.payload.outputs.base_digest }}"
+          CURRENT_DIGEST=$(grep -oP '(?<=@)sha256:[0-9a-f]{64}' Dockerfile.purpose-driven-agent | head -1 || echo "none")
+
+          echo "Current: ${CURRENT_DIGEST}"
+          echo "New    : ${NEW_DIGEST}"
+
+          if [[ "$CURRENT_DIGEST" == "$NEW_DIGEST" ]]; then
+            echo "needed=false" >> $GITHUB_OUTPUT
+            echo "Digest unchanged — no PR needed"
+          else
+            echo "needed=true"                          >> $GITHUB_OUTPUT
+            echo "current_digest=${CURRENT_DIGEST}"    >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update FROM digest
+        if: steps.check.outputs.needed == 'true'
+        id: update
+        run: |
+          NEW_DIGEST="${{ steps.payload.outputs.base_digest }}"
+          BRANCH="chore/update-base-image-${NEW_DIGEST:7:12}"
+
+          sed -i "s|@sha256:[0-9a-f]\{64\}|@${NEW_DIGEST}|g" Dockerfile.purpose-driven-agent
+          sed -i "s|LABEL aos.parent.digest=\"sha256:[0-9a-f]\{64\}\"|LABEL aos.parent.digest=\"${NEW_DIGEST}\"|g" Dockerfile.purpose-driven-agent
+
+          echo "branch=${BRANCH}" >> $GITHUB_OUTPUT
+
+      - name: Commit and push branch
+        if: steps.check.outputs.needed == 'true'
+        run: |
+          BRANCH="${{ steps.update.outputs.branch }}"
+          NEW_DIGEST="${{ steps.payload.outputs.base_digest }}"
+          BASE_TAG="${{ steps.payload.outputs.base_tag }}"
+          MAF_VERSION="${{ steps.payload.outputs.maf_version }}"
+          TRIGGERED_BY="${{ steps.payload.outputs.triggered_by }}"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add Dockerfile.purpose-driven-agent
+
+          # Write commit message to a file to avoid multiline string quoting issues
+          cat > /tmp/commit_msg.txt << MSG
+          chore: update infrastructure base image
+
+          Parent digest: ${NEW_DIGEST}
+          Parent tag   : ${BASE_TAG}
+          MAF version  : ${MAF_VERSION}
+          Triggered by : ${TRIGGERED_BY}
+
+          Automated manifest update. The FROM line in Dockerfile.purpose-driven-agent
+          is the layer manifest (analogous to a git submodule pointer).
+          Merging this PR triggers build-purpose-driven-agent.yml.
+          MSG
+
+          git commit -F /tmp/commit_msg.txt
+          git push origin "$BRANCH"
+
+      - name: Open pull request
+        if: steps.check.outputs.needed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
+        run: |
+          BRANCH="${{ steps.update.outputs.branch }}"
+          NEW_DIGEST="${{ steps.payload.outputs.base_digest }}"
+          SHORT_DIGEST="${NEW_DIGEST:7:12}"
+          BASE_TAG="${{ steps.payload.outputs.base_tag }}"
+          CURRENT_DIGEST="${{ steps.check.outputs.current_digest }}"
+          MAF_VERSION="${{ steps.payload.outputs.maf_version }}"
+          TRIGGERED_BY="${{ steps.payload.outputs.triggered_by }}"
+
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "chore: update infrastructure base image (${SHORT_DIGEST})" \
+            --body "## Base image manifest update
+
+          | | |
+          |--|--|
+          | **Layer** | \`aos/infrastructure\` |
+          | **Previous digest** | \`${CURRENT_DIGEST}\` |
+          | **New digest** | \`${NEW_DIGEST}\` |
+          | **New tag** | \`${BASE_TAG}\` |
+          | **MAF version** | \`${MAF_VERSION}\` |
+          | **Triggered by** | \`${TRIGGERED_BY}\` |
+
+          ## What this PR does
+
+          Updates the \`FROM\` line in \`Dockerfile.purpose-driven-agent\` to pin the
+          new infrastructure base image digest. The \`FROM\` line is the layer manifest —
+          analogous to a git submodule pointer.
+
+          ## What happens on merge
+
+          Merging triggers \`build-purpose-driven-agent.yml\`, which builds this layer,
+          pushes both the base and FAS images to ACR, then dispatches
+          \`base-image-updated\` to \`ASISaga/leadership-agent\`.
+
+          ## Review checklist
+
+          - [ ] Digest matches the infrastructure build that triggered this PR
+          - [ ] Only \`Dockerfile.purpose-driven-agent\` changed"

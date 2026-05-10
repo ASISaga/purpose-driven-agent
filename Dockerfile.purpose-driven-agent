@@ -1,0 +1,81 @@
+# syntax=docker/dockerfile:1.7
+# ─────────────────────────────────────────────────────────────────────────────
+# AOS Purpose-Driven Agent  —  Layer 2 of the AOS container hierarchy
+#
+# Manifest (parent layer):
+#   FROM acraosstagingerm2srfd.azurecr.io/aos/infrastructure@sha256:37c5f677d231215124d7c1de19bbace9a24b54db24906687e734c2e79c88af61
+#
+# This line IS the manifest. It is the only cross-layer dependency declaration.
+# It is updated automatically via PR when the infrastructure layer rebuilds.
+# Do not edit the digest by hand — let the update-base-image workflow do it.
+#
+# Layer contract
+# ──────────────
+# INPUT  (inherited from infrastructure):
+#   • Python 3.12, MAF 1.3.0, FAS hosting adapter, Azure SDK, all .py + .pyc
+#
+# THIS LAYER ADDS:
+#   • PurposeDrivenAgent .py source files (from this repo)
+#   • .pyc compiled against parent .py (imports resolve at compile time)
+#   • All .py files retained for downstream layer compilation
+#
+# OUTPUT to FAS (hosted agent image, stripped):
+#   • .pyc only — .py files removed in the FAS stage
+#   • Non-root aosuser, linux/amd64
+#
+# Platform: linux/amd64 (FAS requirement)
+# ─────────────────────────────────────────────────────────────────────────────
+
+FROM acraosstagingerm2srfd.azurecr.io/aos/infrastructure@sha256:37c5f677d231215124d7c1de19bbace9a24b54db24906687e734c2e79c88af61 AS base
+
+LABEL org.opencontainers.image.title="AOS Purpose-Driven Agent"
+LABEL org.opencontainers.image.description="Layer 2: PurposeDrivenAgent — lifecycle, state machine, LLM boundary, scoring"
+LABEL org.opencontainers.image.vendor="ASI Saga"
+LABEL org.opencontainers.image.source="https://github.com/ASISaga/purpose-driven-agent"
+LABEL aos.layer="2"
+LABEL aos.layer.name="purpose-driven-agent"
+LABEL aos.parent.digest="sha256:37c5f677d231215124d7c1de19bbace9a24b54db24906687e734c2e79c88af61"
+
+WORKDIR /app
+
+# ── Copy this layer's Python source ──────────────────────────────────────────
+# Only .py files from THIS repo. Parent .py files are already present via FROM.
+# Directory structure mirrors the AOS package layout.
+COPY src/purpose_driven_agent/ ./purpose_driven_agent/
+
+# ── Compile to .pyc ───────────────────────────────────────────────────────────
+# Compiles this layer's .py against the full environment (parent .py files
+# are on sys.path, so cross-layer imports resolve at compile time).
+# -j0 = use all available CPUs
+RUN python -m compileall -j0 -q ./purpose_driven_agent/
+
+# ── Smoke test ────────────────────────────────────────────────────────────────
+RUN python -c "
+from purpose_driven_agent import PurposeDrivenAgent
+print('PurposeDrivenAgent import: OK')
+print('Layer 2 smoke test passed.')
+"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FAS stage — stripped image for Foundry Agent Service
+# .py files removed; only .pyc survives. This is what FAS loads.
+# ─────────────────────────────────────────────────────────────────────────────
+FROM base AS fas
+
+# Remove all .py source files from the entire /app tree.
+# .pyc files in __pycache__ directories are retained.
+RUN find /app -name "*.py" -delete \
+    && find /app -name "__pycache__" -type d | head -5
+
+# Verify .pyc files are present and .py files are gone
+RUN python -c "
+import importlib.util, pathlib
+pyc = list(pathlib.Path('/app').rglob('*.pyc'))
+py  = list(pathlib.Path('/app').rglob('*.py'))
+assert len(pyc) > 0, 'No .pyc files found — compilation failed'
+assert len(py)  == 0, f'Found .py files in FAS image: {py}'
+print(f'FAS stage: {len(pyc)} .pyc files, 0 .py files. OK')
+"
+
+USER aosuser
+CMD ["python", "-m", "purpose_driven_agent"]

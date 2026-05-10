@@ -14,30 +14,26 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Framework :: AsyncIO",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
-    "agent-framework>=1.0.0",
-    "agent-framework-foundry>=1.0.0",
-    "azure-ai-agents>=1.1.0",
-    "azure-identity>=1.16.0",
-    "pydantic>=2.12.0",
+    "agent-framework>=1.3.0",          # was >=1.0.0, infrastructure has 1.3.0
+    "agent-framework-foundry>=1.3.0",  # same
+    "azure-ai-agents>=1.1.0",          # already correct
+    "azure-identity>=1.21.0",          # was >=1.16.0, infrastructure has 1.21.0
+    "pydantic>=2.13.0",                # was >=2.12.0, MAF installed 2.13.4
 ]
-
-[project.optional-dependencies]
-azure = [
-    "azure-identity>=1.16.0",
-    "azure-storage-blob>=12.19.0",
-    "azure-storage-queue>=12.8.0",
-    "azure-data-tables>=12.5.0",
-    "azure-ai-ml>=1.14.0",
-]
+# [project.optional-dependencies]
+# azure = [
+#    "azure-identity>=1.16.0",
+#    "azure-storage-blob>=12.19.0",
+#    "azure-storage-queue>=12.8.0",
+#    "azure-data-tables>=12.5.0",
+#    "azure-ai-ml>=1.14.0",
+#]
 full = [
     "purpose-driven-agent[azure]",
 ]
@@ -68,7 +64,7 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 
 [tool.pylint.main]
-py-version = "3.10"
+py-version = "3.12"
 
 [tool.pylint.format]
 max-line-length = 120
@@ -82,6 +78,6 @@ disable = [
 ]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 strict = true
 ignore_missing_imports = true
