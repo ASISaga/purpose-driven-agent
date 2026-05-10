@@ -42,12 +42,15 @@ WORKDIR /app
 # Only .py files from THIS repo. Parent .py files are already present via FROM.
 # Directory structure mirrors the AOS package layout.
 COPY --chown=aosuser:aosuser src/purpose_driven_agent/ ./purpose_driven_agent/
+COPY --chown=aosuser:aosuser src/aos_mcp_servers/ ./aos_mcp_servers/
+
+USER aosuser
 
 # ── Compile to .pyc ───────────────────────────────────────────────────────────
 # Compiles this layer's .py against the full environment (parent .py files
 # are on sys.path, so cross-layer imports resolve at compile time).
 # -j0 = use all available CPUs
-RUN python -m compileall -j0 -q ./purpose_driven_agent/
+RUN python -m compileall -j0 -q ./purpose_driven_agent/ ./aos_mcp_servers/
 
 # ── Smoke test ────────────────────────────────────────────────────────────────
 RUN <<EOF python
@@ -64,8 +67,8 @@ FROM base AS fas
 
 # Remove all .py source files from the entire /app tree.
 # .pyc files in __pycache__ directories are retained.
-RUN find /app -name "*.py" -delete \
-    && find /app -name "__pycache__" -type d | head -5
+RUN find /app/purpose_driven_agent /app/aos_mcp_servers -name "*.py" -delete \
+    && find /app/purpose_driven_agent /app/aos_mcp_servers -name "__pycache__" -type d | head -5
 
 # Verify .pyc files are present and .py files are gone
 RUN <<EOF python
