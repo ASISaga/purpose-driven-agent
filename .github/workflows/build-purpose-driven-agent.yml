@@ -78,6 +78,7 @@ jobs:
         run: |
           if [ -d tests/ ]; then
             pip install pytest pytest-asyncio --quiet
+            pip install -e . --quiet
             # Install deps for test execution (not for image  image uses .pyc)
             pip install -r requirements.infrastructure.txt --quiet 2>/dev/null || true
             pytest tests/ -q
