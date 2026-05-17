@@ -11,6 +11,35 @@ interaction.
 
 ---
 
+## AOS Container Hierarchy
+
+The AOS agent stack is built as a sequence of Docker image layers.  Each
+layer extends the one above it — no layer re-implements what a parent already
+provides.
+
+```
+infrastructure             (Layer 1) — Python 3.12, MAF 1.3.0, FAS hosting adapter
+  └── purpose-driven-agent (Layer 2) — THIS REPO — PurposeDrivenAgent + aos_mcp_servers
+        └── leadership-agent    (Layer 3) — multi-agent orchestration
+              └── business-agent     (Layer 4) — business strategy
+                    └── founder-agent      (Layer 5) — FAS-hosted orchestrator
+```
+
+**Layer 2 contract:**
+
+| Layer provides | Layer requires from parent |
+|---|---|
+| `PurposeDrivenAgent` ABC + `GenericPurposeDrivenAgent` | Python 3.12 runtime |
+| `aos_mcp_servers` routing and transport stubs | MAF 1.3.0 installed |
+| FAS hosting adapter (`hosting.py`) | `agent-framework-foundry-hosting` |
+| `ENV PYTHONPATH=/app` | `WORKDIR /app` |
+
+The compiled `.pyc` artifacts from all layers are assembled in the **FAS
+stage** (`FROM base AS fas`): `.py` files are stripped and only `.pyc`
+files survive, loaded by `SourcelessFileLoader` at runtime.
+
+---
+
 ## Core Design Principles
 
 | Principle | Description |
@@ -66,12 +95,13 @@ interaction.
 agent_framework.Agent   (Microsoft Agent Framework — optional)
         │
         ▼
-PurposeDrivenAgent      ← abstract base class (this package)
+PurposeDrivenAgent      ← abstract base class (this package, Layer 2)
         │
         ├── GenericPurposeDrivenAgent   ← concrete, general-purpose
         │
-        ├── LeadershipAgent             ← leadership-agent package
-        │       └── CMOAgent            ← cmo-agent package
+        ├── LeadershipAgent             ← leadership-agent (Layer 3)
+        │       └── BusinessAgent       ← business-agent (Layer 4)
+        │               └── FounderAgent  ← founder-agent (Layer 5, FAS target)
         │
         └── <YourCustomAgent>           ← extend for your domain
 ```
@@ -195,3 +225,95 @@ class FinanceAgent(PurposeDrivenAgent):
 The standalone package is designed for development, testing, and environments
 where Azure services are not available.  Swap each component by providing an
 implementation of the relevant interface.
+
+---
+
+## FAS Hosting Adapter
+
+Layer 2 includes `purpose_driven_agent/hosting.py` — the bridge between the
+`agent-framework-foundry-hosting` server (installed in Layer 1) and
+`PurposeDrivenAgent`.
+
+### Entry point
+
+```
+python -m purpose_driven_agent
+   └── purpose_driven_agent/__main__.py
+         └── hosting.run_server()
+               ├── _ensure_imports()      — seeds __init_subclass__ registry
+               ├── _discover_agent_class() — three-strategy discovery
+               └── AgentServer.serve()    — starts HTTP listener
+```
+
+### Agent class discovery
+
+| Strategy | Mechanism | When used |
+|---|---|---|
+| 1 | `importlib.metadata` entry point `agent_framework.hosted_agents:default` | Package installed |
+| 2 | `PurposeDrivenAgent.get_hosted_agent()` — most-derived registered subclass | Running from `PYTHONPATH` |
+| 3 | `PurposeDrivenAgent` itself | Test / fallback only |
+
+### `__init_subclass__` registry
+
+Every subclass is automatically registered at import time:
+
+```python
+_AGENT_REGISTRY: dict[str, type[PurposeDrivenAgent]] = {}
+
+class PurposeDrivenAgent:
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        _AGENT_REGISTRY[cls.__qualname__] = cls
+```
+
+`get_hosted_agent()` returns the entry with the longest MRO (most-derived
+class) — meaning `FounderAgent` wins over `LeadershipAgent` in a Layer 5
+image.
+
+---
+
+## Routing Tag Protocol
+
+The FAS workflow reads routing tags from agent responses to decide the next
+routing step.  Tags are enforced in Python code — unconditionally — by
+`PurposeDrivenAgent.enforce_routing_tag()`.
+
+### Tags
+
+| Tag | Emitted by | Meaning |
+|---|---|---|
+| `[ROUTE:CFO]` | Orchestrator agents | Route to CFO specialist |
+| `[ROUTE:CMO]` | Orchestrator agents | Route to CMO specialist |
+| `[COMPLETE]` | Orchestrator agents | End deliberation |
+| `[HANDBACK]` | Specialist agents | Hand control back to orchestrator |
+
+### Enforcement flow
+
+```
+LLM produces response text
+        │
+enforce_routing_tag(response_text)
+        │
+        ├── Scan last 120 chars for any known tag
+        │       │
+        │       ├── tag found AND in allowed set  →  return unchanged
+        │       ├── tag found BUT not in allowed  →  replace with default tag
+        │       └── no tag found                 →  append default tag
+        │
+        └── return enforced response
+```
+
+### `RoutingMixin` — declarative role declaration
+
+```python
+from purpose_driven_agent.routing_mixin import RoutingMixin
+
+class FounderAgent(RoutingMixin, BusinessAgent):
+    ROUTING_ROLE = "orchestrator"   # allowed: [ROUTE:CFO], [ROUTE:CMO], [COMPLETE]
+
+class CFOAgent(RoutingMixin, BusinessAgent):
+    ROUTING_ROLE = "specialist"     # allowed: [HANDBACK]
+```
+
+`RoutingMixin` implements `get_routing_tags()` and `get_default_routing_tag()`
+based on `ROUTING_ROLE`, satisfying the abstract contract on `PurposeDrivenAgent`.

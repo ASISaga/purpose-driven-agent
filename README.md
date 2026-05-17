@@ -1,9 +1,9 @@
 # purpose-driven-agent
 
 [![PyPI version](https://img.shields.io/pypi/v/purpose-driven-agent.svg)](https://pypi.org/project/purpose-driven-agent/)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![CI](https://github.com/ASISaga/purpose-driven-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/ASISaga/purpose-driven-agent/actions/workflows/ci.yml)
+[![CI](https://github.com/ASISaga/purpose-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/ASISaga/purpose-agent/actions/workflows/ci.yml)
 
 **The fundamental building block of the Agent Operating System (AOS).**
 
@@ -17,26 +17,30 @@ purpose rather than short-term tasks.
 ## Table of Contents
 
 1. [What is a Purpose-Driven Agent?](#what-is-a-purpose-driven-agent)
-2. [Installation](#installation)
-3. [Quick Start](#quick-start)
-4. [Architecture Overview](#architecture-overview)
-5. [Inheritance Hierarchy](#inheritance-hierarchy)
-6. [Usage Examples](#usage-examples)
+2. [AOS Container Hierarchy](#aos-container-hierarchy)
+3. [Installation](#installation)
+4. [Quick Start](#quick-start)
+5. [Architecture Overview](#architecture-overview)
+6. [Inheritance Hierarchy](#inheritance-hierarchy)
+7. [Usage Examples](#usage-examples)
    - [GenericPurposeDrivenAgent](#genericpurposedrivenagent)
    - [Custom Subclass](#custom-subclass)
    - [Event Handling](#event-handling)
    - [Goal Tracking](#goal-tracking)
    - [Purpose Alignment](#purpose-alignment)
    - [ML Pipeline (IMLService)](#ml-pipeline-imlservice)
-7. [LoRA Adapter Pattern](#lora-adapter-pattern)
-8. [MCP Context Preservation](#mcp-context-preservation)
-9. [Perpetual Operation Pattern](#perpetual-operation-pattern)
-10. [Configuration](#configuration)
-11. [Testing](#testing)
-12. [API Reference](#api-reference)
-13. [Contributing](#contributing)
-14. [Related Packages](#related-packages)
-15. [License](#license)
+8. [FAS Hosting](#fas-hosting)
+9. [Routing Tag Enforcement](#routing-tag-enforcement)
+10. [RoutingMixin](#routingmixin)
+11. [LoRA Adapter Pattern](#lora-adapter-pattern)
+12. [MCP Context Preservation](#mcp-context-preservation)
+13. [Perpetual Operation Pattern](#perpetual-operation-pattern)
+14. [Configuration](#configuration)
+15. [Testing](#testing)
+16. [API Reference](#api-reference)
+17. [Contributing](#contributing)
+18. [Related Packages](#related-packages)
+19. [License](#license)
 
 ---
 
@@ -59,23 +63,41 @@ for AI agents**, not just an orchestration framework.
 
 ---
 
+## AOS Container Hierarchy
+
+`purpose-driven-agent` is **Layer 2** in the AOS container stack.  Each layer
+inherits from the one above it — no layer re-implements what a parent already
+provides.
+
+```
+infrastructure             (Layer 1) — Python 3.12, MAF 1.3.0, FAS hosting adapter
+  └── purpose-driven-agent (Layer 2) — THIS REPO — PurposeDrivenAgent + aos_mcp_servers
+        └── leadership-agent    (Layer 3)
+              └── business-agent     (Layer 4)
+                    └── founder-agent      (Layer 5, FAS target)
+```
+
+- **Layer 1** (`infrastructure`) installs Python 3.12, the Microsoft Agent
+  Framework (MAF), and `agent-framework-foundry-hosting` which runs the FAS
+  HTTP server.
+- **Layer 2** (this repo) adds `PurposeDrivenAgent`, `aos_mcp_servers`, and
+  the FAS hosting adapter (`hosting.py`).  Any descendant image is immediately
+  hostable by Azure AI Foundry Agent Service.
+- **Layers 3–5** add domain logic without touching hosting plumbing.
+
+---
+
 ## Installation
 
 ```bash
-# Core (agent_framework + Azure AI Agent Service)
+# Core installation
 pip install purpose-driven-agent
-
-# With Azure ML / Storage backends
-pip install "purpose-driven-agent[azure]"
-
-# Everything
-pip install "purpose-driven-agent[full]"
 
 # Development
 pip install "purpose-driven-agent[dev]"
 ```
 
-**Requirements:** Python 3.10 or higher.
+**Requirements:** Python 3.12 or higher.
 
 ### Core Dependencies
 
@@ -85,12 +107,11 @@ pip install "purpose-driven-agent[dev]"
 | `agent-framework-foundry` | Adapter converting agents into Foundry Agent Service-compatible hosted services |
 | `azure-ai-agents` | Azure AI Agents Service client — engine hosting agents in the cloud |
 | `azure-identity` | Secure, keyless authentication via Entra Agent ID |
-| `aos-mcp-servers` | MCP tool routing and transport |
 | `pydantic` | Configuration and data validation |
 
 > **Note:** `purpose-driven-agent` is a **code-only library** — it is not
 > deployed to Azure as its own service.  It is consumed by agent repos
-> (e.g. `leadership-agent`, `ceo-agent`) that *are* deployed.
+> (e.g. `leadership-agent`, `founder-agent`) that *are* deployed.
 
 ---
 
@@ -177,12 +198,13 @@ PurposeDrivenAgent             ← abstract base (this package)
         │
         ├── GenericPurposeDrivenAgent   ← concrete, general-purpose
         │
-        ├── LeadershipAgent            ← pip install leadership-agent
-        │       ├── CEOAgent           ← pip install ceo-agent
-        │       ├── CFOAgent           ← pip install cfo-agent
-        │       ├── CTOAgent           ← pip install cto-agent
-        │       ├── CSOAgent           ← pip install cso-agent
-        │       └── CMOAgent           ← pip install cmo-agent
+        ├── LeadershipAgent            ← pip install leadership-agent (Layer 3)
+        │       ├── BusinessAgent      ← pip install business-agent   (Layer 4)
+        │       │     └── FounderAgent ← pip install founder-agent    (Layer 5, FAS target)
+        │       ├── CFOAgent
+        │       ├── CTOAgent
+        │       ├── CSOAgent
+        │       └── CMOAgent
         │
         └── <YourCustomAgent>          ← extend for your domain
 ```
@@ -344,7 +366,107 @@ await agent.act("aml_infer", {"prompt": "Summarise Q2 expenses"})
 
 ---
 
-## LoRA Adapter Pattern
+## FAS Hosting
+
+Any `PurposeDrivenAgent` subclass can be hosted by Azure AI Foundry Agent
+Service (FAS) without additional plumbing.  Run the container with:
+
+```bash
+python -m purpose_driven_agent
+```
+
+This invokes `purpose_driven_agent/hosting.py → run_server()`, which:
+
+1. Seeds the `__init_subclass__` registry by importing all packages in `/app`.
+2. Discovers the concrete agent class using a three-strategy cascade:
+   - **Entry point** — reads `agent_framework.hosted_agents:default` from
+     `importlib.metadata` (respects `AGENT_ENTRY_POINT` env var).
+   - **Registry** — calls `PurposeDrivenAgent.get_hosted_agent()` for the
+     most-derived registered subclass.
+   - **Fallback** — uses `PurposeDrivenAgent` itself (test-only).
+3. Instantiates the class and hands it to `AgentServer.serve()`.
+
+### Entry-point declaration
+
+This repo declares `PurposeDrivenAgent` as the default hosted agent in
+`pyproject.toml`:
+
+```toml
+[project.entry-points."agent_framework.hosted_agents"]
+default = "purpose_driven_agent.agent:PurposeDrivenAgent"
+```
+
+Leaf agent repos (e.g. `founder-agent`) override this with their own
+concrete class, requiring zero changes to the hosting plumbing.
+
+### Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `AGENT_ENTRY_POINT` | `default` | Entry point name to look up |
+| `AGENT_SERVICE_PORT` | `8000` | HTTP port the FAS server listens on |
+| `LOG_LEVEL` | `INFO` | Python logging level |
+| `PYTHONPATH` | `/app` | Module search path (set in Dockerfile) |
+
+---
+
+## Routing Tag Enforcement
+
+The FAS workflow reads routing tags from every agent response to decide which
+agent to invoke next.  `PurposeDrivenAgent` enforces tag presence and validity
+in code — unconditionally, without relying on LLM compliance.
+
+### Tag protocol
+
+| Tag | Emitter | Meaning |
+|---|---|---|
+| `[ROUTE:CFO]` | Orchestrator agents | Route to CFO specialist |
+| `[ROUTE:CMO]` | Orchestrator agents | Route to CMO specialist |
+| `[COMPLETE]` | Orchestrator agents | End deliberation |
+| `[HANDBACK]` | Specialist agents | Hand control back to orchestrator |
+
+### Enforcement method
+
+```python
+# On every LLM response before returning it to the workflow:
+response = agent.enforce_routing_tag(llm_output)
+```
+
+The algorithm:
+1. Scan the last 120 characters of the response for any known tag.
+2. Tag present and allowed → return unchanged.
+3. Tag present but disallowed → replace with the agent's default tag.
+4. No tag → append the agent's default tag on a new line.
+
+Override `get_routing_tags()` and `get_default_routing_tag()` in subclasses
+to restrict the allowed set.
+
+---
+
+## RoutingMixin
+
+Concrete subclasses declare their role with `RoutingMixin` — no need to
+implement `get_routing_tags` and `get_default_routing_tag` manually:
+
+```python
+from purpose_driven_agent.routing_mixin import RoutingMixin
+
+class FounderAgent(RoutingMixin, BusinessAgent):
+    ROUTING_ROLE = "orchestrator"
+    # allowed tags: [ROUTE:CFO], [ROUTE:CMO], [COMPLETE]
+    # default tag:  [COMPLETE]
+
+class CFOAgent(RoutingMixin, BusinessAgent):
+    ROUTING_ROLE = "specialist"
+    # allowed tags: [HANDBACK]
+    # default tag:  [HANDBACK]
+```
+
+`RoutingMixin` must appear **before** `PurposeDrivenAgent` in the MRO so that
+its `get_routing_tags` and `get_default_routing_tag` override the base
+`NotImplementedError` raises.
+
+---
 
 The `adapter_name` parameter maps the agent's purpose to a LoRA adapter:
 
@@ -440,8 +562,8 @@ pytest tests/test_purpose_driven_agent.py -v
 ```
 
 Tests use `pytest-asyncio` with `asyncio_mode = "auto"` (configured in
-`pyproject.toml`).  No manual `asyncio.run()` or `@pytest.mark.asyncio` loops
-needed in most cases.
+`pyproject.toml`).  No `@pytest.mark.asyncio` decorator is required on
+individual test functions.
 
 ---
 
@@ -451,14 +573,16 @@ Full API documentation: [`docs/api-reference.md`](docs/api-reference.md)
 
 Key classes:
 
-| Class | Description |
-|---|---|
-| `PurposeDrivenAgent` | Abstract base class |
-| `GenericPurposeDrivenAgent` | Concrete general-purpose implementation |
-| `A2AAgentTool` | Agent-to-Agent tool representation for multi-agent orchestration |
-| `ContextMCPServer` | Lightweight MCP context server |
-| `IMLService` | Abstract ML service interface |
-| `NoOpMLService` | No-op placeholder implementation |
+| Class | Module | Description |
+|---|---|---|
+| `PurposeDrivenAgent` | `purpose_driven_agent` | Abstract base class |
+| `GenericPurposeDrivenAgent` | `purpose_driven_agent` | Concrete general-purpose implementation |
+| `A2AAgentTool` | `purpose_driven_agent` | Agent-to-Agent tool representation |
+| `ContextMCPServer` | `purpose_driven_agent` | Lightweight MCP context server |
+| `IMLService` | `purpose_driven_agent` | Abstract ML service interface |
+| `NoOpMLService` | `purpose_driven_agent` | No-op placeholder implementation |
+| `RoutingMixin` | `purpose_driven_agent.routing_mixin` | Orchestrator/specialist role declaration |
+| `RoutingClassifier` | `aos_mcp_servers.routing` | Stateless routing tag detector |
 
 ---
 
@@ -470,8 +594,8 @@ linting, and pull-request guidelines.
 Quick start:
 
 ```bash
-git clone https://github.com/ASISaga/purpose-driven-agent.git
-cd purpose-driven-agent
+git clone https://github.com/ASISaga/purpose-agent.git
+cd purpose-agent
 pip install -e ".[dev]"
 pytest tests/ -v
 pylint src/purpose_driven_agent
@@ -483,12 +607,9 @@ pylint src/purpose_driven_agent
 
 | Package | Description |
 |---|---|
-| [`leadership-agent`](https://github.com/ASISaga/leadership-agent) | LeadershipAgent: decision-making, multi-agent orchestration |
-| [`ceo-agent`](https://github.com/ASISaga/ceo-agent) | CEOAgent: executive + leadership dual-purpose |
-| [`cfo-agent`](https://github.com/ASISaga/cfo-agent) | CFOAgent: finance + leadership dual-purpose |
-| [`cto-agent`](https://github.com/ASISaga/cto-agent) | CTOAgent: technology + leadership dual-purpose |
-| [`cso-agent`](https://github.com/ASISaga/cso-agent) | CSOAgent: security + leadership dual-purpose |
-| [`cmo-agent`](https://github.com/ASISaga/cmo-agent) | CMOAgent: marketing + leadership dual-purpose |
+| [`leadership-agent`](https://github.com/ASISaga/leadership-agent) | LeadershipAgent: Layer 3 — decision-making, multi-agent orchestration |
+| [`business-agent`](https://github.com/ASISaga/business-agent) | BusinessAgent: Layer 4 — business strategy and operations |
+| [`founder-agent`](https://github.com/ASISaga/founder-agent) | FounderAgent: Layer 5 — FAS-hosted orchestrator |
 | [`AgentOperatingSystem`](https://github.com/ASISaga/AgentOperatingSystem) | Full AOS runtime with Azure, LoRAx, and orchestration |
 
 ---

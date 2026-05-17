@@ -22,7 +22,7 @@ submit a pull request.
 
 ## Prerequisites
 
-- Python 3.10 or higher
+- Python 3.12 or higher
 - `git`
 - Optionally: `make`
 
@@ -32,8 +32,8 @@ submit a pull request.
 
 ```bash
 # 1. Fork and clone
-git clone https://github.com/<your-fork>/purpose-driven-agent.git
-cd purpose-driven-agent
+git clone https://github.com/ASISaga/purpose-agent.git
+cd purpose-agent
 
 # 2. Create a virtual environment
 python -m venv .venv
@@ -52,26 +52,33 @@ python -c "from purpose_driven_agent import GenericPurposeDrivenAgent; print('OK
 ## Project Structure
 
 ```
-purpose-driven-agent/
+purpose-agent/
 ├── src/
-│   └── purpose_driven_agent/
-│       ├── __init__.py          # Public API exports
-│       ├── agent.py             # PurposeDrivenAgent + GenericPurposeDrivenAgent
-│       ├── context_server.py    # ContextMCPServer implementation
-│       └── ml_interface.py      # IMLService abstract interface
+│   ├── purpose_driven_agent/
+│   │   ├── __init__.py          # Public API exports
+│   │   ├── __main__.py          # python -m purpose_driven_agent entry point
+│   │   ├── agent.py             # PurposeDrivenAgent + GenericPurposeDrivenAgent
+│   │   ├── context_provider.py  # ContextProvider, SubconsciousContextProvider, etc.
+│   │   ├── context_server.py    # ContextMCPServer implementation
+│   │   ├── hosting.py           # FAS hosting adapter (discovery + AgentServer)
+│   │   ├── ml_interface.py      # IMLService abstract interface
+│   │   └── routing_mixin.py     # RoutingMixin for orchestrator/specialist roles
+│   └── aos_mcp_servers/
+│       ├── __init__.py
+│       └── routing.py           # MCP transport stubs + RoutingClassifier
 ├── tests/
 │   ├── __init__.py
 │   ├── conftest.py              # Shared pytest fixtures
+│   ├── test_context_provider.py
 │   └── test_purpose_driven_agent.py
 ├── examples/
 │   └── basic_usage.py
 ├── docs/
-│   ├── architecture.md
+│   ├── README.md                # Documentation navigation index
 │   ├── api-reference.md
+│   ├── architecture.md
 │   └── contributing.md          ← this file
-├── .github/
-│   └── workflows/
-│       └── ci.yml
+├── Dockerfile.purpose-driven-agent
 ├── pyproject.toml
 └── README.md
 ```
@@ -80,8 +87,9 @@ purpose-driven-agent/
 
 ## Testing
 
-Tests use **pytest** with **pytest-asyncio**.  All async tests must be
-decorated with `@pytest.mark.asyncio`.
+Tests use **pytest** with **pytest-asyncio** in `auto` mode.  Async test
+functions do not require a `@pytest.mark.asyncio` decorator — `asyncio_mode =
+"auto"` is set in `pyproject.toml` and applies automatically.
 
 ### Run all tests
 
@@ -110,10 +118,8 @@ pytest tests/ --cov=purpose_driven_agent --cov-report=term-missing
 ### Writing tests
 
 ```python
-import pytest
 from purpose_driven_agent import GenericPurposeDrivenAgent
 
-@pytest.mark.asyncio
 async def test_initialize_returns_true() -> None:
     agent = GenericPurposeDrivenAgent(
         agent_id="test", purpose="Testing"
@@ -203,13 +209,13 @@ isort src/ tests/
 
 ## Code Style
 
-- **Python 3.10+** type hints on all public functions and methods.
+- **Python 3.12** type hints on all public functions and methods.
 - `async def` for any I/O-bound operation.
 - `snake_case` for functions, variables, and module names.
 - `PascalCase` for class names.
 - `UPPER_SNAKE_CASE` for module-level constants.
 - Maximum line length: **120 characters**.
-- Use `Optional[X]` rather than `X | None` for compatibility.
+- Prefer `X | None` syntax (Python 3.10+ union syntax) in new code.
 - Prefer f-strings for logging and string formatting.
 - Use descriptive variable names; avoid single-letter names outside comprehensions.
 

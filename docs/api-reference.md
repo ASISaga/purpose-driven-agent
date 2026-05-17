@@ -8,9 +8,16 @@
 |---|---|---|
 | `PurposeDrivenAgent` | Abstract class | Fundamental building block (ABC) |
 | `GenericPurposeDrivenAgent` | Concrete class | General-purpose implementation |
+| `A2AAgentTool` | Dataclass | Agent-to-Agent tool representation |
 | `ContextMCPServer` | Class | Lightweight MCP context server |
 | `IMLService` | Abstract class | ML service interface |
 | `NoOpMLService` | Concrete class | No-op ML service placeholder |
+| `Context` | Dataclass | Structured context for LLM injection |
+| `ContextProvider` | Abstract class | Context pipeline provider interface |
+| `SubconsciousContextProvider` | Concrete class | Provider backed by subconscious MCP server |
+| `SubconsciousSchemaContextProvider` | Concrete class | Provider backed by JSON-LD mind-schema docs |
+| `create_subconscious_provider` | Factory function | Build `SubconsciousContextProvider` |
+| `create_subconscious_schema_provider` | Factory function | Build `SubconsciousSchemaContextProvider` |
 
 ---
 
@@ -38,6 +45,7 @@ PurposeDrivenAgent(
     config: Optional[Dict[str, Any]] = None,
     aos: Optional[Any] = None,
     ml_service: Optional[IMLService] = None,
+    context_provider: Optional[ContextProvider] = None,
 )
 ```
 
@@ -57,6 +65,7 @@ PurposeDrivenAgent(
 | `config` | `Dict[str, Any]` | `{}` | Configuration dict (`"context_server"` sub-key) |
 | `aos` | `Any` | `None` | AOS instance for persona queries |
 | `ml_service` | `IMLService` | `NoOpMLService()` | ML backend implementation |
+| `context_provider` | `ContextProvider` | `None` | Context pipeline provider; called before each event |
 
 ### Abstract Methods
 
@@ -65,6 +74,62 @@ PurposeDrivenAgent(
 Return the list of personas/skills this agent uses.  Must be implemented by all concrete subclasses.
 
 **Returns:** Non-empty list of persona name strings.
+
+### FAS Hosting / Agent Registry
+
+#### `_routing_tags: ClassVar[frozenset[str]]`
+
+Class-level set of all known routing tags:
+`{"[ROUTE:CFO]", "[ROUTE:CMO]", "[COMPLETE]", "[HANDBACK]"}`.
+Override in subclasses (or use `RoutingMixin`) to restrict the allowed set.
+
+#### `__init_subclass__(cls, **kwargs) → None`
+
+Automatically registers every concrete subclass in the module-level
+`_AGENT_REGISTRY` at import time.  Called by Python when a subclass is
+defined — no manual registration required.
+
+#### `classmethod get_hosted_agent() → type[PurposeDrivenAgent]`
+
+Return the most-derived registered subclass for FAS hosting.
+
+Discovery priority:
+1. Most-derived class in `_AGENT_REGISTRY` (longest MRO = most specialised).
+2. `cls` itself if no subclasses are registered.
+
+Used as the fallback by `hosting._discover_agent_class()` when
+`importlib.metadata` entry points are not available.
+
+### Routing Tag Enforcement
+
+#### `get_routing_tags() → frozenset[str]`
+
+Return the set of routing tags this agent is allowed to emit.  Returns
+`_routing_tags` by default.  Override in subclasses, or use `RoutingMixin`.
+
+#### `get_default_routing_tag() → str`
+
+Return the tag to append when the LLM output contains no routing tag.
+Raises `NotImplementedError` in the base class — all concrete subclasses must
+override, or inherit from `RoutingMixin`.
+
+#### `enforce_routing_tag(response_text: str) → str`
+
+Ensure the response ends with exactly one valid routing tag.
+
+**Algorithm:**
+1. Scan the last 120 characters for any known tag.
+2. Tag present and in `get_routing_tags()` → return unchanged.
+3. Tag present but not in `get_routing_tags()` → replace with `get_default_routing_tag()`.
+4. No tag → append `get_default_routing_tag()` on a new line.
+
+**Parameters:**
+
+| Name | Type | Description |
+|---|---|---|
+| `response_text` | `str` | Raw LLM response string |
+
+**Returns:** Response string guaranteed to end with a valid routing tag.
 
 ### Lifecycle Methods
 
@@ -298,6 +363,104 @@ Implements `IMLService`.  Every method raises `NotImplementedError`.
 | `completed_goals` | `List[Dict]` | Completed goals |
 | `purpose_metrics` | `Dict[str, int]` | Purpose-alignment counters |
 | `mcp_context_server` | `Optional[ContextMCPServer]` | MCP instance (set after `initialize()`) |
+| `foundry_agent_id` | `Optional[str]` | Foundry-assigned ID (set by `register_with_foundry()`) |
 | `config` | `Dict[str, Any]` | Configuration dict |
 | `state` | `str` | Current state string (`"initialized"`, `"running"`) |
 | `logger` | `logging.Logger` | Bound logger |
+
+---
+
+## module `purpose_driven_agent.hosting`
+
+FAS hosting adapter.  Discovers the concrete agent class and starts the
+`AgentServer` HTTP listener.  Executed by `python -m purpose_driven_agent`.
+
+### `_discover_agent_class() → type`
+
+Discover the concrete agent class to host using a three-strategy cascade:
+
+1. **Entry point** — reads group `agent_framework.hosted_agents`, key
+   `AGENT_ENTRY_POINT` (default `"default"`) via `importlib.metadata`.
+2. **Registry** — calls `PurposeDrivenAgent.get_hosted_agent()`.
+3. **Fallback** — returns `PurposeDrivenAgent` directly (test-only).
+
+Returns the class object, not an instance.
+
+### `_ensure_imports() → None`
+
+Imports every top-level package directory in `/app` so that
+`__init_subclass__` registrations fire before `_discover_agent_class` runs.
+Required in the FAS image where `.py` files are absent and the package is not
+installed.
+
+### `run_server() → None`
+
+Main entry point: configures logging, calls `_ensure_imports()`,
+`_discover_agent_class()`, instantiates the class, registers with
+`AgentServer`, and calls `server.serve(port=AGENT_SERVICE_PORT)`.  Blocks
+until the process exits.
+
+---
+
+## module `purpose_driven_agent.routing_mixin`
+
+### class `RoutingMixin`
+
+Mixin that provides `get_routing_tags()` and `get_default_routing_tag()`
+based on a declarative `ROUTING_ROLE`.
+
+Must appear before `PurposeDrivenAgent` in the MRO:
+
+```python
+class FounderAgent(RoutingMixin, BusinessAgent): ...
+```
+
+#### Class attribute
+
+| Attribute | Type | Default | Description |
+|---|---|---|---|
+| `ROUTING_ROLE` | `Literal["orchestrator", "specialist"]` | `"orchestrator"` | Declares this agent's routing role |
+
+#### `get_routing_tags() → frozenset[str]`
+
+Returns `{"[ROUTE:CFO]", "[ROUTE:CMO]", "[COMPLETE]"}` for orchestrators;
+`{"[HANDBACK]"}` for specialists.
+
+#### `get_default_routing_tag() → str`
+
+Returns `"[COMPLETE]"` for orchestrators; `"[HANDBACK]"` for specialists.
+
+---
+
+## module `aos_mcp_servers.routing`
+
+MCP transport implementations and routing tag utilities.
+
+### Constants
+
+| Name | Type | Value |
+|---|---|---|
+| `ROUTING_TAGS` | `frozenset[str]` | `{"[ROUTE:CFO]", "[ROUTE:CMO]", "[COMPLETE]", "[HANDBACK]"}` |
+
+### class `RoutingClassifier`
+
+Stateless utility that detects routing tags in LLM response text.  All methods
+are `@staticmethod`.
+
+#### `extract_tag(response_text: str) → str | None`
+
+Return the routing tag found in the last 120 characters of `response_text`,
+or `None`.  Returns the tag in canonical uppercase form (e.g. `"[ROUTE:CFO]"`).
+
+#### `has_tag(response_text: str) → bool`
+
+Return `True` if any routing tag is present in the response tail.
+
+#### `is_route_tag(tag: str) → bool`
+
+Return `True` if `tag` is a `[ROUTE:*]` tag (not `COMPLETE` or `HANDBACK`).
+
+#### `route_target(tag: str) → str | None`
+
+Extract the specialist name from a `[ROUTE:X]` tag (e.g. `"CFO"`, `"CMO"`),
+or `None` if not a route tag.
