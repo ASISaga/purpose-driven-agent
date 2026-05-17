@@ -245,6 +245,7 @@ jobs:
           # Get the new digest after rebase
           NEW_DIGEST=$(crane digest ${{ env.ACR }}/${{ env.IMAGE }}:latest)
           NEW_PARENT_DIGEST="${{ github.event.client_payload.parent_digest }}"
+          # Digest format is "sha256:<64 hex>"; cut 8-19 keeps the same 12-char short id as ${VAR:7:12}.
           NEW_PARENT_SHORT=$(echo "${NEW_PARENT_DIGEST}" | cut -c 8-19)
           echo "digest=${NEW_DIGEST}" >> $GITHUB_OUTPUT
           echo "Rebased: old parent ${OLD_DIGEST:7:12} -> new parent ${NEW_PARENT_SHORT}"
@@ -265,7 +266,8 @@ jobs:
           GH_TOKEN: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
           NEW_PARENT_DIGEST: ${{ github.event.client_payload.parent_digest }}
         run: |
-          BRANCH="chore/manifest-update-infra-${NEW_PARENT_DIGEST:7:12}"
+          SHORT_NEW_PARENT_DIGEST=$(echo "${NEW_PARENT_DIGEST}" | cut -c 8-19)
+          BRANCH="chore/manifest-update-infra-${SHORT_NEW_PARENT_DIGEST}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "${BRANCH}"
@@ -276,7 +278,7 @@ jobs:
 
           git add Dockerfile.purpose-driven-agent
           git commit \
-            -m "chore: rebase on infrastructure@${NEW_PARENT_DIGEST:7:12}" \
+            -m "chore: rebase on infrastructure@${SHORT_NEW_PARENT_DIGEST}" \
             -m "Parent image: ${{ env.PARENT_IMAGE }}" \
             -m "New digest: ${NEW_PARENT_DIGEST}" \
             -m "Triggered by: ${{ github.event.client_payload.parent_sha }}" \
@@ -285,7 +287,7 @@ jobs:
           git push origin "${BRANCH}"
 
           gh pr create \
-            --title "chore: rebase on infrastructure@${NEW_PARENT_DIGEST:7:12}" \
+            --title "chore: rebase on infrastructure@${SHORT_NEW_PARENT_DIGEST}" \
             --body "Automated manifest update. No source changes. .pyc layers identical.
             Parent: \`${{ env.PARENT_IMAGE }}@${NEW_PARENT_DIGEST}\`
             Breaking candidate: \`${{ github.event.client_payload.breaking_candidate }}\`" \
