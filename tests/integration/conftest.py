@@ -7,12 +7,21 @@ from pathlib import Path
 
 import pytest
 
-ROOT_DIR = Path(__file__).resolve().parents[1]
+ROOT_DIR = Path(__file__).resolve().parents[2]
 SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from purpose_driven_agent import GenericPurposeDrivenAgent
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _require_agent_framework() -> None:
+    """Skip integration suite when agent_framework is unavailable."""
+    pytest.importorskip(
+        "agent_framework",
+        reason="Integration tests require agent_framework.",
+    )
 
 
 @pytest.fixture
