@@ -1,0 +1,66 @@
+# syntax=docker/dockerfile:1.7
+# =============================================================================
+# AOS Common Agent Dockerfile
+#
+# Shared across all agent layers. All variation is passed as build args
+# from the workflow — no layer-specific logic lives here.
+#
+# Build args (all required, all passed by workflow):
+#   PARENT_IMAGE     Full image reference without digest
+#                    e.g. acraosstagingerm2srfd.azurecr.io/aos/infra
+#   PARENT_DIGEST    Digest of parent image fetched live from ACR
+#                    e.g. sha256:abc123...
+#   LAYER_NUMBER     Numeric layer position e.g. 2
+#   LAYER_NAME       Kebab-case layer name  e.g. purpose-driven-agent
+#   PACKAGE_DIR      Directory name under /app/ e.g. purpose_driven_agent
+#   PACKAGE_MODULE   Python -m target       e.g. purpose_driven_agent
+#   REPO_NAME        GitHub repo name       e.g. ASISaga/purpose-driven-agent
+#
+# Build context (sent by workflow, always tiny):
+#   compiled/<PACKAGE_DIR>/   Pre-compiled .pyc files only — no .py source
+#
+# The workflow compiles .py → .pyc before calling az acr build.
+# This Dockerfile never sees .py source — only bytecode enters the image.
+# =============================================================================
+
+ARG PARENT_IMAGE
+ARG PARENT_DIGEST
+
+FROM ${PARENT_IMAGE}@${PARENT_DIGEST}
+
+# ── Build-time metadata args ──────────────────────────────────────────────────
+ARG LAYER_NUMBER
+ARG LAYER_NAME
+ARG PACKAGE_DIR
+ARG PACKAGE_MODULE
+ARG REPO_NAME
+
+# ── Labels ────────────────────────────────────────────────────────────────────
+LABEL org.opencontainers.image.vendor="ASI Saga"
+LABEL org.opencontainers.image.source="https://github.com/${REPO_NAME}"
+LABEL aos.network="neutral"
+LABEL aos.layer="${LAYER_NUMBER}"
+LABEL aos.layer.name="${LAYER_NAME}"
+LABEL aos.parent.image="${PARENT_IMAGE}"
+LABEL aos.parent.digest="${PARENT_DIGEST}"
+
+WORKDIR /app
+
+# ── Copy pre-compiled bytecode ────────────────────────────────────────────────
+# compiled/<PACKAGE_DIR>/ is built by the workflow before az acr build.
+# Only .pyc files are present — workflow strips .py before sending context.
+COPY --chown=aosuser:aosuser compiled/${PACKAGE_DIR}/ ./${PACKAGE_DIR}/
+
+# ── Verify: no .py source, .pyc present ──────────────────────────────────────
+RUN python -c "\
+import pathlib, os; \
+pkg = os.environ.get('PACKAGE_DIR', '${PACKAGE_DIR}'); \
+py  = list(pathlib.Path(f'/app/{pkg}').rglob('*.py')); \
+pyc = list(pathlib.Path(f'/app/{pkg}').rglob('*.pyc')); \
+assert len(py)  == 0, f'Found .py source in image: {py}'; \
+assert len(pyc)  > 0, f'No .pyc files found in /app/{pkg} — build context error'; \
+print(f'Layer ${LAYER_NUMBER} (${LAYER_NAME}): 0 .py, {len(pyc)} .pyc. OK') \
+"
+
+USER aosuser
+CMD ["python", "-m", "${PACKAGE_MODULE}"]
