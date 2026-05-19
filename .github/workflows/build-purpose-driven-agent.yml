@@ -21,7 +21,6 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    environment: staging
     uses: ASISaga/aos-infra/.github/workflows/aos-agent-build.yml@main
     with:
       trigger:         "${{ github.event_name == 'repository_dispatch' && 'rebase' || 'source-change' }}"
