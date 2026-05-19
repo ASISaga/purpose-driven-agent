@@ -9,4 +9,15 @@ jobs:
   build:
     uses: ASISaga/aos-infra/.github/workflows/aos-agent-build.yml@main
     with:
-      layer_name: "purpose-driven-agent"
+      trigger:         "${{ github.event_name == 'repository_dispatch' && 'rebase' || 'source-change' }}"
+      layer_number:    "2"
+      layer_name:      "purpose-driven-agent"
+      image:           "aos/purpose-driven-agent"
+      parent_image:    "${{ vars.AOS_INFRA_IMAGE }}"
+      package_dir:     "purpose_driven_agent"
+      package_module:  "purpose_driven_agent"
+      repo_name:       "ASISaga/purpose-driven-agent"
+      src_path:        "src/purpose_driven_agent"
+      extra_src_paths: "src/aos_mcp_servers"
+      parent_digest:   ""
+      breaking_candidate: "false"
