@@ -1,57 +1,66 @@
 # syntax=docker/dockerfile:1.7
 # =============================================================================
-# AOS Purpose-Driven Agent — Layer 2 of the ACR neutral network
+# AOS Common Agent Dockerfile
 #
-# FROM line is the manifest — the only cross-layer dependency declaration.
-# Updated automatically via manifest-update PR when the parent layer changes.
-# Do not edit the digest by hand.
+# Shared across all agent layers. All variation is passed as build args
+# from the workflow — no layer-specific logic lives here.
 #
-# Layer contract:
-#   INPUT:  parent image (.pyc bytecode of all lower layers)
-#   ADD:    this layer's .pyc (compiled from src/ in this repo)
-#   OUTPUT: parent .pyc + this layer's .pyc — no .py source anywhere
+# Build args (all required, all passed by workflow):
+#   PARENT_IMAGE     Full image reference without digest
+#                    e.g. acraosstagingerm2srfd.azurecr.io/aos/infra
+#   PARENT_DIGEST    Digest of parent image fetched live from ACR
+#                    e.g. sha256:abc123...
+#   LAYER_NUMBER     Numeric layer position e.g. 2
+#   LAYER_NAME       Kebab-case layer name  e.g. purpose-driven-agent
+#   PACKAGE_DIR      Directory name under /app/ e.g. purpose_driven_agent
+#   PACKAGE_MODULE   Python -m target       e.g. purpose_driven_agent
+#   REPO_NAME        GitHub repo name       e.g. ASISaga/purpose-driven-agent
 #
-# Build: ACR Task triggered by az acr build — runs inside Azure.
-#        Build context: src/ directory only (~50KB).
-#        No image pulled to GitHub runner.
+# Build context (sent by workflow, always tiny):
+#   compiled/<PACKAGE_DIR>/   Pre-compiled .pyc files only — no .py source
 #
-# Rebase: when parent digest changes (non-breaking bump), this image is
-#         remanifested via crane rebase — no recompilation, no ACR Task.
+# The workflow compiles .py → .pyc before calling az acr build.
+# This Dockerfile never sees .py source — only bytecode enters the image.
 # =============================================================================
-ARG INFRA_IMAGE
-ARG INFRA_DIGEST
-FROM ${INFRA_IMAGE}@${INFRA_DIGEST}
 
-LABEL org.opencontainers.image.title="AOS Purpose-Driven Agent"
-LABEL org.opencontainers.image.description="Layer 2: PurposeDrivenAgent — compiled bytecode only"
+ARG PARENT_IMAGE
+ARG PARENT_DIGEST
+
+FROM ${PARENT_IMAGE}@${PARENT_DIGEST}
+
+# ── Build-time metadata args ──────────────────────────────────────────────────
+ARG LAYER_NUMBER
+ARG LAYER_NAME
+ARG PACKAGE_DIR
+ARG PACKAGE_MODULE
+ARG REPO_NAME
+
+# ── Labels ────────────────────────────────────────────────────────────────────
 LABEL org.opencontainers.image.vendor="ASI Saga"
-LABEL org.opencontainers.image.source="https://github.com/ASISaga/purpose-driven-agent"
-LABEL aos.layer="2"
-LABEL aos.layer.name="purpose-driven-agent"
+LABEL org.opencontainers.image.source="https://github.com/${REPO_NAME}"
 LABEL aos.network="neutral"
-LABEL aos.parent.digest="sha256:37c5f677d231215124d7c1de19bbace9a24b54db24906687e734c2e79c88af61"
+LABEL aos.layer="${LAYER_NUMBER}"
+LABEL aos.layer.name="${LAYER_NAME}"
+LABEL aos.parent.image="${PARENT_IMAGE}"
+LABEL aos.parent.digest="${PARENT_DIGEST}"
 
 WORKDIR /app
 
-# Copy pre-compiled .pyc files from the ACR Task build context.
-# The ACR Task compiles src/ → .pyc before sending the build context,
-# so this COPY receives only bytecode — no .py source enters the image.
-COPY --chown=aosuser:aosuser compiled/purpose_driven_agent/ ./purpose_driven_agent/
-COPY --chown=aosuser:aosuser compiled/aos_mcp_servers/ ./aos_mcp_servers/
+# ── Copy pre-compiled bytecode ────────────────────────────────────────────────
+# compiled/<PACKAGE_DIR>/ is built by the workflow before az acr build.
+# Only .pyc files are present — workflow strips .py before sending context.
+COPY --chown=aosuser:aosuser compiled/${PACKAGE_DIR}/ ./${PACKAGE_DIR}/
 
-ENV PYTHONPATH=/app:/app/lib/python3.12/site-packages
-
-# Verify: no .py source, .pyc present, import chain works
+# ── Verify: no .py source, .pyc present ──────────────────────────────────────
 RUN python -c "\
-import pathlib; \
-py  = list(pathlib.Path('/app/purpose_driven_agent').rglob('*.py')) + \
-      list(pathlib.Path('/app/aos_mcp_servers').rglob('*.py')); \
-pyc = list(pathlib.Path('/app/purpose_driven_agent').rglob('*.pyc')) + \
-      list(pathlib.Path('/app/aos_mcp_servers').rglob('*.pyc')); \
-assert len(py)  == 0, f'Found .py source: {py}'; \
-assert len(pyc)  > 0, 'No .pyc files found'; \
-print(f'Layer 2: 0 .py, {len(pyc)} .pyc. OK') \
+import pathlib, os; \
+pkg = os.environ.get('PACKAGE_DIR', '${PACKAGE_DIR}'); \
+py  = list(pathlib.Path(f'/app/{pkg}').rglob('*.py')); \
+pyc = list(pathlib.Path(f'/app/{pkg}').rglob('*.pyc')); \
+assert len(py)  == 0, f'Found .py source in image: {py}'; \
+assert len(pyc)  > 0, f'No .pyc files found in /app/{pkg} — build context error'; \
+print(f'Layer ${LAYER_NUMBER} (${LAYER_NAME}): 0 .py, {len(pyc)} .pyc. OK') \
 "
 
 USER aosuser
-CMD ["python", "-m", "purpose_driven_agent"]
+CMD ["python", "-m", "${PACKAGE_MODULE}"]
