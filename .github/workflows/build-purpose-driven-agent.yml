@@ -31,7 +31,7 @@ jobs:
       src_path:       src/purpose_driven_agent
       extra_src_paths: src/aos_mcp_servers
       parent_digest:  ${{ github.event.client_payload.parent_digest || '' }}
-      breaking_candidate: ${{ github.event.client_payload.breaking_candidate || false }}
+      breaking_candidate: "${{ github.event.client_payload.breaking_candidate || 'false' }}"
     secrets:
       AZURE_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
